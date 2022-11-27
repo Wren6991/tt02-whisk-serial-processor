@@ -15,121 +15,168 @@ module whisk_cpu (
 	input  wire       clk,
 	input  wire       rst_n,
 
-	output wire       spi_sck_en_next,
-	output wire       spi_sdo_next,
-	output wire       spi_csn_next,
-	input  wire       spi_sdi_prev
+	// SPI SRAM interface
+	output wire       mem_sck_en_next,
+	output wire       mem_sdo_next,
+	output wire       mem_csn_next,
+	input  wire       mem_sdi_prev,
+
+	// Shift registers for IO port
+	output wire       ioport_sck_en_next,
+	output wire       ioport_sdo_next,
+	input  wire       ioport_sdi_prev,
+	output wire       ioport_latch_i_next,
+	output wire       ioport_latch_o_next
 );
 
 `include "whisk_const.vh"
 
 reg [15:0] instr;
+
+wire [WHISK_INSTR_OP_MSB  -WHISK_INSTR_OP_LSB  :0] instr_op;
+wire [WHISK_INSTR_COND_MSB-WHISK_INSTR_COND_LSB:0] instr_cond;
+wire [WHISK_INSTR_RT_MSB  -WHISK_INSTR_RT_LSB  :0] instr_rt;
+wire [WHISK_INSTR_RS_MSB  -WHISK_INSTR_RS_LSB  :0] instr_rs;
+wire [WHISK_INSTR_RD_MSB  -WHISK_INSTR_RD_LSB  :0] instr_rd;
+
+assign {instr_rd, instr_rs, instr_rt, instr_cond, instr_op} = instr;
+
+wire instr_op_ls     = instr_op[3]; // Whether an instruction is a ldr/str
+wire instr_op_st_nld = instr_op[2]; // Whether a ldr/str is a load or store
+wire instr_op_ls_da  = instr_op[1]; // Whether a ldr/str has decrement-after
+wire instr_op_ls_ib  = instr_op[0]; // Whether a ldr/str has increment-before
+
+// ----------------------------------------------------------------------------
+// Main control state machine
+
 reg [3:0]  bit_ctr;
 reg [2:0]  state;
 reg        instr_cond_true;
 reg        instr_has_imm_operand;
 
-// ----------------------------------------------------------------------------
-// Main control state machine
+// Note there is a 2 cycle delay from issuing a bit on SDO to getting a bit
+// back on SDI. This is handled with a 2-cycle stall after issuing a read
+// address, so that e.g. S_FETCH always has the first instruction bit
+// available on the first cycle.
 
-wire [WHISK_INSTR_OPC_MSB -WHISK_INSTR_OPC_LSB :0] instr_opc  = instr[WHISK_INSTR_OPC_MSB  : WHISK_INSTR_OPC_LSB ];
-wire [WHISK_INSTR_COND_MSB-WHISK_INSTR_COND_LSB:0] instr_cond = instr[WHISK_INSTR_COND_MSB : WHISK_INSTR_COND_LSB];
-wire [WHISK_INSTR_RT_MSB  -WHISK_INSTR_RT_LSB  :0] instr_rt   = instr[WHISK_INSTR_RT_MSB   : WHISK_INSTR_RT_LSB  ];
-wire [WHISK_INSTR_RS_MSB  -WHISK_INSTR_RS_LSB  :0] instr_rs   = instr[WHISK_INSTR_RS_MSB   : WHISK_INSTR_RS_LSB  ];
-wire [WHISK_INSTR_RD_MSB  -WHISK_INSTR_RD_LSB  :0] instr_rd   = instr[WHISK_INSTR_RD_MSB   : WHISK_INSTR_RD_LSB  ];
+localparam [2:0] S_FETCH      = 2'd0; // Sample 16 instr bits, increment PC
+localparam [2:0] S_EXEC       = 2'd1; // Loop all GPRs, write one GPR
+localparam [2:0] S_PC_NONSEQ0 = 2'd2; // Issue cmd, then issue 2 PC bits
+localparam [2:0] S_PC_NONSEQ1 = 2'd3; // Issue rest of PC bits, stall 2 cycles
+localparam [2:0] S_LS_ADDR0   = 2'd4; // Issue cmd; if load, issue 2 addr bits
+localparam [2:0] S_LS_ADDR1   = 2'd5; // Issue addr; if load, stall 2 cycles
+localparam [2:0] S_LS_DATA    = 2'd6; // Issue store data, or sample load data
+localparam [2:0] S_LS_IMMPD   = 2'd7; // Re-read imm for imm post-decrement
 
-localparam [2:0] S_FETCH      = 2'd0;
-localparam [2:0] S_EXEC       = 2'd1;
-localparam [2:0] S_PC_NONSEQ0 = 2'd2;
-localparam [2:0] S_PC_NONSEQ1 = 2'd3;
-localparam [2:0] S_LS_ADDR0   = 2'd4;
-localparam [2:0] S_LS_ADDR1   = 2'd5;
-localparam [2:0] S_LS_DATA    = 2'd6;
+reg [3:0] bit_ctr_nxt;
+reg [2:0] state_nxt_wrap;
+reg [2:0] state_nxt;
+
+always @ (*) begin
+	bit_ctr_nxt = bit_ctr + 4'h1;
+	state_nxt_wrap = state;
+	case (state)
+		S_FETCH: begin
+			if (!instr_cond_true) begin
+				// Dump it!
+				state_nxt_wrap = S_FETCH;
+			end else if (instr_op_ls && !instr_op_ls_ib) begin
+				// Load/store with no preincrement, go straight to address state
+				state_nxt_wrap = S_LS_ADDR0;
+				bit_ctr_nxt = instr_op_st_nld ? 4'h8 : 4'h6;
+			end else begin
+				state_nxt_wrap = S_EXEC;
+			end
+		end
+		S_EXEC: begin
+			if (instr_op_ls) begin
+				state_nxt_wrap = S_LS_ADDR0;
+				bit_ctr_nxt = instr_op_st_nld ? 4'h8 : 4'h6;
+			end else if (instr_rd == 3'd7) begin
+				state_nxt_wrap = S_PC_NONSEQ0;
+				bit_ctr_nxt = 4'h6;
+			end else begin
+				state_nxt_wrap = S_FETCH;
+			end
+		end
+		S_PC_NONSEQ0: begin
+			state_nxt_wrap = S_PC_NONSEQ1;
+		end
+		S_PC_NONSEQ1: begin
+			if (!instr_cond_true) begin
+				// Have just been reset, instr is invalid
+				state_nxt_wrap = S_FETCH;
+			end else if (instr_has_imm_operand && instr_op_ls && instr_op_ls_da) begin
+				state_nxt_wrap = S_LS_IMMPD;
+			end else begin
+				state_nxt_wrap = S_FETCH;
+			end
+		end
+		S_LS_ADDR0: begin
+			state_nxt_wrap = S_LS_ADDR1;
+		end
+		S_LS_ADDR1: begin
+			state_nxt_wrap = S_LS_DATA;
+		end
+		S_LS_DATA: begin
+			state_nxt_wrap = S_PC_NONSEQ0;
+			bit_ctr_nxt = 4'h6;
+		end
+		S_LS_IMMPD: begin
+			state_nxt = S_PC_NONSEQ0;
+			bit_ctr_nxt = 4'h6;
+		end
+	endcase
+	state_nxt = &bit_ctr ? state_nxt_wrap : state;
+end
+
+// Start of day:
+//
+// - The only resettable flops are state, bit_ctr, and instr_cond_true.
+//
+// - We reset state/bit_ctr to a nonsequential fetch, and reset
+//   instr_cond_true=0 (usually unreachable)
+//
+// - instr_cond_true=0 masks the fetch address to 0, regardless of PC
+//
+// - The first instruction must be `add pc, zero, #4` to initialise PC
+//
+// - You may then want to clear all the GPRs, though it's not necessary as
+//   they will always be written before first read.
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		state <= S_PC_NONSEQ0;
-		bit_ctr <= 4'h0;
+		bit_ctr <= 4'h5;
 	end else begin
-		bit_ctr <= bit_ctr + 4'h1;
-		case (state)
-		S_FETCH: if (&bit_ctr) begin
-			if (!instr_cond_true) begin
-				// Dump it!
-				state <= S_FETCH;
-			end else if (instr_opc[3] && !instr_opc[0]) begin
-				// Load/store with no preincrement, go straight to address state
-				state <= S_LS_ADDR0;
-				bit_ctr <= instr_opc[2] ? 4'h8 : 4'h6; 
-			end else begin
-				state <= S_EXEC;
-			end
-		end
-		S_EXEC: if (&bit_ctr) begin
-			if ((instr_opc[3]) begin
-				state <= S_LS_ADDR0;
-				bit_ctr <= instr_opc[2] ? 4'h8 : 4'h6; 
-			end else if (instr_rd == 3'd7) begin
-				state <= S_PC_NONSEQ0;
-				bit_ctr <= 4'h6;
-			end else begin
-				state <= S_FETCH;
-			end
-		end
-		S_PC_NONSEQ0: if (&bit_ctr) begin
-			state <= S_PC_NONSEQ1;
-		end
-		S_PC_NONSEQ1: if (&bit_ctr) begin
-			state <= S_FETCH;
-		end
-		S_LS_ADDR0: if (&bit_ctr) begin
-			state <= S_LS_ADDR1;
-		end
-		S_LS_ADDR1: if (&bit_ctr) begin
-			state <= S_LS_DATA;
-		end
-		S_LS_DATA: if (&bit_ctr) begin
-			if (instr_opc[1]) begin
-				state <= S_LS_POSTDEC;
-			end else begin
-				state <= S_PC_NONSEQ0;
-				bit_ctr <= 4'h6;
-			end
-		end
-// FIXME: LS with an immediate post-decrement needs to read the immediate in
-// again for the decrement, so probably go LS_DATA -> PC_NONSEQx ->
-// LS_POSTDEC!
-		S_LS_POSTDEC: if (&bit_ctr) begin
-			state <= S_PC_NONSEQ0;
-			bit_ctr <= 4'h6;
-		end
+		state <= state_nxt;
+		bit_ctr <= bit_ctr_nxt;
 	end
 end
-
 
 // ----------------------------------------------------------------------------
 // Instruction shifter and early decode
 
 always @ (posedge clk) begin
 	if (state == S_FETCH) begin
-		instr <= {spi_sdi_prev, instr[15:1]};
+		instr <= {mem_sdi_prev, instr[15:1]};
 	end
 end
 
 // Decode condition and imm operand flags as the instruction comes in, so we
 // can use them to steer the state machine at the end of S_FETCH.
 
-reg flag_c;
-reg flag_z;
-reg flag_n;
+reg instr_has_imm_operand_nxt;
+reg instr_cond_true_nxt;
 
-wire [3:0] condition_vector = {flag_z, flag_c, flag_n, 1'b1};
+// From ALU:
+wire [7:0] condition_vec8
 
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		instr_has_imm_operand <= 1'b0;
-		instr_cond_true <= 1'b0;
-	end else if (instr_has_imm_operand && !instr_cond_true) begin
+always @ (*) begin
+	instr_has_imm_operand_nxt = instr_has_imm_operand;
+	instr_cond_true_nxt = instr_cond_true;
+
+	if (instr_has_imm_operand && !instr_cond_true) begin
 		// In this case we must be in S_FETCH. Hold instr_cond_true for an
 		// additional fetch cycle so that the immediate operand is also
 		// dumped, but clear the operand flag so we don't loop forever.
@@ -143,9 +190,25 @@ always @ (posedge clk or negedge rst_n) begin
 		end
 		if (bit_ctr == (WHISK_INSTR_COND_MSB + 1)) begin
 			// Decode condition as it goes past
-			instr_cond_true <= condition_vector[instr[W_INSTR-1 -: 2]] ^ instr[W_INSTR-3];
+			instr_cond_true <= condition_vec8[instr[W_INSTR-1 -: 3]];
 		end
 	end
+end
+
+// instr_cond_true must reset to 0, because we use it to recognise the first
+// fetch after reset. We don't care about instr_has_imm_operand, because it
+// is initialised during S_FETCH before first use.
+
+always @ (posedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		instr_cond_true <= 1'b0;
+	end else begin
+		instr_cond_true <= instr_cond_true_nxt;
+	end
+end
+
+always @ (posedge clk) begin
+	instr_has_imm_operand <= instr_has_imm_operand_nxt;
 end
 
 // ----------------------------------------------------------------------------
@@ -189,9 +252,12 @@ whisk_regfile #(
 // On every cycle, the GPRs are shifted or rotated either to the left or the
 // right. There is no shift enable, because enables cost money.
 //
-// - In all but LS_ADDR0/LS_ADDR1, we shift to right, and qr (rightmost flop
-//   in each register chain) is the output. This lets us propagate carries
-//   serially.
+// - Normally we shift to right, and qr (rightmost flop in each register
+//   chain) is the output. This lets us propagate carries serially.
+//   Exceptions are: EXEC (instr: SRL/SRA only), LS_ADDR0 and LS_ADDR1.
+//
+// - For EXEC of SRL/SRA we reverse the GPR rotation to get the opposite shift
+//   direction from a SLL. (See signal: alu_shift)
 //
 // - Total shift amount through LS_ADDR0/LS_ADDR1 must be a multiple of 16, to
 //   avoid permanently rotating a register!
@@ -210,12 +276,13 @@ whisk_regfile #(
 //   cycle of LS_ADDR1, store data follows immmediately in LS_DATA. Rotate
 //   left for entirety of LS_ADDR1, use regfile ql as output.
 
-wire instr_str = instr_opc[2];
-assign regfile_shift_l_nr =
-	state == S_LS_ADDR0 && !instr_str ? (&bit_ctr[3:1] ? 1'b1 : bit_ctr[0]) :
-	state == S_LS_ADDR1 && !instr_str ? (&bit_ctr[3:1] ? bit_ctr[0] : 1'b1) :
-	state == S_LS_ADDR1 &&  instr_str ? 1'b1                                : 1'b0;
+wire instr_is_right_shift = instr_op == WHISK_OP_SHIFT && !instr_rt[2];
 
+assign regfile_shift_l_nr =
+	state == S_EXEC && instr_is_right_shift ? 1'b1                                :
+	state == S_LS_ADDR0 && !instr_op_st_nld ? (&bit_ctr[3:1] ? 1'b1 : bit_ctr[0]) :
+	state == S_LS_ADDR1 && !instr_op_st_nld ? (&bit_ctr[3:1] ? bit_ctr[0] : 1'b1) :
+	state == S_LS_ADDR1 &&  instr_op_st_nld ? 1'b1                                : 1'b0;
 
 // ----------------------------------------------------------------------------
 // Program counter
@@ -239,28 +306,53 @@ whisk_shiftreg_leftright #(
 	.ql   (pc_ql)
 );
 
-// PC is incremented by 2 during FETCH phase. (shift-to-right)
+// We increment PC at the following times, noting that at the beginning of
+// S_FETCH we do not know whether the instruction has an immediate, or
+// whether its condition is true:
+//
+// - S_FETCH: +2 (Note: if there is an immediate, and cond is false, we go
+//   through S_FETCH twice to dump the immediate, so +4 total).
+//
+// - S_EXEC: +2 if there is an immediate, UNLESS instruction is a load/store
+//   with post-decrement.
+//
+// - S_LS_IMMPD: +2 (only reachable for load/store with immediate
+//   post-decrement). Note: these instructions need special handling because
+//   they fetch the immediate twice, so PC needs to point to the immediate
+//   after S_EXEC.
+
+wire pc_increment =
+	state == S_FETCH ||
+	state == S_EXEC && !(instr_has_imm_operand && instr_op_ls && instr_op_ls_da) ||
+	state == S_LS_IMMPD;
 
 reg pc_ci;
 wire pc_co, pc_sum;
-assign {pc_co, pc_sum} = pc_qr + (~|bit_ctr[3:1] ? bit_ctr[0] : pc_ci);
+
+assign {pc_co, pc_sum} = pc_qr + (~|bit_ctr[3:1] ? bit_ctr[0] && pc_increment : pc_ci);
+
 always @ (posedge clk) begin
 	pc_ci <= pc_co;
 end
 
-// Similar shift rules to register file shift rules for loads. LSB of addr
-// must be available on q_r on the penultimate cycle of PC_NONSEQ1.
-// FIXME: avoid pc rotation in shortened LS_ADDR0
+// Similar shift rules to register file shift rules for loads. LSB of addr is
+// available on q_r on the penultimate cycle of PC_NONSEQ1. Also jiggle the
+// PC during LS_ADDR0, as this state is not 16 cycles long, and we don't want
+// to permanently rotate the PC.
 
 wire pc_l_nr =
 	state == S_PC_NONSEQ0 ? (&bit_ctr[3:1] ? 1'b1 : bit_ctr[0]) :
-	state == S_PC_NONSEQ1 ? (&bit_ctr[3:1] ? bit_ctr[0] : 1'b1) : 1'b0;
+	state == S_PC_NONSEQ1 ? (&bit_ctr[3:1] ? bit_ctr[0] : 1'b1) :
+	state == S_LS_ADDR0   ? bit_ctr[0]                          : 1'b0;
 
 assign pc_dr = pc_ql;
 
 assign pc_dl =
-	state == S_FETCH                    ? pc_sum  :
-	state == S_EXEC && instr_rd == 3'd7 ? alu_out : pc_qr;
+	state == S_FETCH                                           ? pc_sum       :
+	state == S_EXEC    && instr_rd != 3'd7                     ? pc_sum       :
+	state == S_EXEC    && instr_rd == 3'd7                     ? alu_out      :
+	state == S_LS_DATA && instr_rd == 3'd7 && !instr_op_st_nld ? mem_sdi_prev :
+	state == S_LS_IMMPD                                        ? pc_sum       : pc_qr;
 
 
 // ----------------------------------------------------------------------------
@@ -268,29 +360,55 @@ assign pc_dl =
 
 wire op_s =
 	instr_rs == 3'd7 ? pc_qr        :
-	instr_rs == 3'd6 ? spi_sdi_prev : reg_rs_qr;
+	instr_rs == 3'd6 ? mem_sdi_prev : reg_rs_qr;
 
 wire op_t =
 	instr_rs == 3'd7 ? pc_qr        : reg_rt_qr;
 
 reg alu_ci;
+wire [1:0] alu_add = op_s +  op_t + (~|bit_ctr ? 1'b0 : alu_ci);
+wire [1:0] alu_sub = op_s + !op_t + (~|bit_ctr ? 1'b1 : alu_ci);
+
+// Shift uses the ALU carry flop as a 1-cycle delay. SRL/SRA rotate the
+// regfile to the left, SLL rotates the regfile to the right, and the delay
+// produces a shift opposite to the regfile's rotation.
+
+wire [1:0] alu_shift = {
+	instr_is_right_shift ? reg_rs_qr : reg_rs_ql,
+	|bit_ctr ? alu_ci : reg_rs_ql && instr_rt[0]
+};
+
+wire ls_early_postdec = state == S_PC_NONSEQ1 && instr_op_ls &&
+	instr_op_ls_da && !instr_has_imm_operand;
+
 wire alu_co, alu_result;
-
-// TODO shift instructions
-
 assign {alu_co, alu_result} =
-	state == S_LS_POSTDEC             ? op_s + !op_t + (~|bit_ctr ? 1'b1 : alu_ci) :
-	// state != S_EXEC                       ?  -> don't care because there is a write enable
-	(instr_opc & 4'h9) WHISK_OPC_LOAD_PREINC ? op_s +  op_t + (~|bit_ctr ? 1'b0 : alu_ci) :
-	instr_opc == WHISK_OPC_ADD               ? op_s +  op_t + (~|bit_ctr ? 1'b0 : alu_ci) :
-	instr_opc == WHISK_OPC_SUB               ? op_s + !op_t + (~|bit_ctr ? 1'b1 : alu_ci) :
-	instr_opc == WHISK_OPC_ANDN              ? op_s && !op_t                              :
-	instr_opc == WHISK_OPC_XOR               ? op_s ^ op_t                                : reg_rd_q;
-
-wire update_flags = state == S_EXEC && instr_opc < WHISK_OPC_IN;
+	state == S_LS_IMMPD           ? alu_sub           :
+	ls_early_postdec              ? alu_sub           :
+	// state == S_EXEC:
+	instr_op_ls && instr_op_ls_ib ? alu_add           :
+	instr_op == WHISK_OP_ADD      ? alu_add           :
+	instr_op == WHISK_OP_SUB      ? alu_sub           :
+	instr_op == WHISK_OP_ANDN     ? op_s && !op_t     :
+	instr_op == WHISK_OP_XOR      ? op_s ^ op_t       :
+	instr_op == WHISK_OP_SHIFT    ? alu_shift         :
+	instr_op == WHISK_OP_INOUT    ? ioport_sdi_prev   : reg_rd_qr;
 
 always @ (posedge clk) begin
 	alu_ci <= alu_co;
+end
+
+// ----------------------------------------------------------------------------
+// Flags
+
+reg flag_z;
+reg flag_c;
+reg flag_n;
+
+wire update_flags = (state == S_EXEC || state == S_LS_DATA) && ~|instr_cond;
+
+// TODO sensible flags for load/store
+always @ (posedge clk) begin
 	if (update_flags) begin
 		flag_z <= (flag_z || ~|bit_ctr) && !alu_result;
 		flag_n <= alu_result;
@@ -298,35 +416,41 @@ always @ (posedge clk) begin
 	end
 end
 
+assign condition_vec8 = {
+	!flag_z, flag_z,
+	!flag_c, flag_c,
+	!flag_n, flag_n,
+	1'b1,    1'b1
+};
+
 // ----------------------------------------------------------------------------
-// SPI controls
+// Memory SPI controls
 
 // Deassert CSn before issuing a nonsequential address, only.
-assign spi_csn_next =
-	instr_cond_true && state == S_EXEC && &bit_ctr && instr_opc < WHISK_OPC_OUT && instr_rd == 3'd7;
-	instr_cond_true && state == S_EXEC && &bit_ctr && instr_opc[3] ||
-	instr_cond_true && state == S_FETCH && &bit_ctr && instr_opc[3] && !instr_opc[0] ||
-	state == S_LS_DATA && &bit_ctr && !instr_opc[1] ||
-	state == S_LS_POSTDEC;
+assign mem_csn_next =
+	&bit_ctr && state_nxt_wrap == S_PC_NONSEQ0 ||
+	&bit_ctr && state_nxt_wrap == S_LS_ADDR;
 
 // Pedal to the metal on SCK except when pulling CSn for a nonsequential
 // access, or when executing an instruction with no immediate.
-assign spi_sck_en_next = !(spi_csn_next || (
+assign mem_sck_en_next = !(
+	mem_csn_next ||
 	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && !instr_has_imm_operand
+);
 
-
+// ldr issues addresses two cycles earlier than str, due to in->out delay.
 localparam [15:0] SPI_INSTR_READ  = 16'h0003 << 6;
 localparam [15:0] SPI_INSTR_WRITE = 16'h0002 << 8;
 
-wire spi_sdo_ls_addr0 =
-	instr_opc[2]  ? SPI_INSTR_WRITE[bit_ctr] :
-	&bit_ctr[3:1] ? rs_qr                    : SPI_INSTR_READ[bit_ctr];
+wire mem_sdo_ls_addr0 =
+	instr_op_st_nld ? SPI_INSTR_WRITE[bit_ctr] :
+	&bit_ctr[3:1]   ? rs_qr                    : SPI_INSTR_READ[bit_ctr];
 
-assign spi_sdo_next =
+assign mem_sdo_next =
 	state == S_PC_NONSEQ0 ? (&bit_ctr[3:1] ? pc_qr : SPI_INSTR_READ[bit_ctr]) :
 	state == S_PC_NONSEQ1 ? pc_qr                                             :
-	state == S_LS_ADDR0   ? spi_sdo_ls_addr0                                  :
-	state == S_LS_ADDR1   ? (instr_opc[2] ? rs_ql : rs_qr)                    :
+	state == S_LS_ADDR0   ? mem_sdo_ls_addr0                                  :
+	state == S_LS_ADDR1   ? (instr_op_st_nld ? rs_ql : rs_qr)                 :
 	state == S_LS_DATA    ? rd_qr                                             : 1'b0;
 
 // ----------------------------------------------------------------------------
@@ -334,10 +458,43 @@ assign spi_sdo_next =
 
 assign reg_rd_wen =
 	state == S_EXEC ||
-	(state == S_LS_DATA && !instr_opc[2]) ||
-	state == S_LS_POSTDEC;
+	(state == S_LS_DATA && !instr_op_st_nld) ||
+	state == S_PC_NONSEQ1 && ls_early_postdec ||
+	state == S_LS_IMMPD;
 
-assign reg_rd_d = state == S_LS_DATA ? spi_sdi_prev : alu_result;
+assign reg_rd_d = state == S_LS_DATA ? mem_sdi_prev : alu_result;
+
+// ----------------------------------------------------------------------------
+// IO port
+
+// Expected IO setup is a 1x 8-bit PISO shift register for input, and 2x 8-bit
+// SIPO shift registers for output:
+//
+// - IN: A latch_i pulse, then 8 clocks, sampling 8 data bits. Input is in the
+//   8 MSBs of the destination register (sorry!), garbage in LSBs.
+//
+// - OUT: 15 clocks with data, then a latch_o pulse. Only 15 clocks to avoid
+//   an additional flop for delaying latch_o, so only 15 bits are usable.
+//
+// The IN interface is still driven when executing an OUT, with more clocks.
+// Abusable for a few extra inputs with another PISO shift register.
+//
+// Some data is still clocked out on an IN, there's just no latch_o pulse.
+// Abusable to drive longer SIPO chains using multiple INs and a final OUT.
+
+wire do_io_instr = state == S_EXEC && instr_op == WHISK_OP_INOUT;
+
+wire io_instr_out = (instr_rt & (WHISK_OP2_OUT | WHISK_OP2_IN)) == WHISK_OP2_OUT;
+
+assign ioport_latch_i_next = do_io_instr && ~|bit_ctr;
+assign ioport_latch_o_next = do_io_instr && io_instr_out && &bit_ctr;
+
+assign ioport_sck_en_next  = do_io_instr && (
+	(bit_ctr >= 4'h6 && bit_ctr < 4'he) ||
+	(io_instr_out && ~&bit_ctr)
+);
+
+assign ioport_sdo_next = do_io_instr && rs_ql;
 
 endmodule
 
@@ -351,6 +508,8 @@ endmodule
 // qr is the value of the rightmost flop in a shift register (usually what you
 // want when shifting out to right) and ql is the value of the leftmost flop
 // in a shift register (usually what you want when shifting out to left).
+//
+// Out-of-range indices read as 0, and ignore writes.
 
 module whisk_regfile #(
 	parameter W = 16,
@@ -374,10 +533,12 @@ module whisk_regfile #(
 	output wire                 rt_qr
 );
 
-wire [N-1:0] dl;
-wire [N-1:0] dr;
-wire [N-1:0] ql;
-wire [N-1:0] qr;
+localparam N_PADDED = 1 << $clog2(N);
+
+wire [N-1:0]        dl;
+wire [N-1:0]        dr;
+wire [N_PADDED-1:0] ql;
+wire [N_PADDED-1:0] qr;
 
 assign rd_ql = ql[rd];
 assign rs_ql = ql[rs];
@@ -389,21 +550,28 @@ assign rt_qr = qr[rt];
 
 genvar g;
 generate
-for (g = 0; g < N; g = g + 1) begin: gpr_shifter
+for (g = 0; g < N_PADDED; g = g + 1) begin: loop_gprs
+	if (g >= N) begin: gpr_tieoff
 
-	// Recirculate unless this register is addressed as rd.
-	assign dl[g] = rd_wen && rd == g ? rd_d : qr[g];
-	assign dr[g] = rd_wen && rd == g ? rd_d : ql[g];
+		assign ql[g] = 1'b0;
+		assign qr[g] = 1'b0;
 
-	whisk_shiftreg_leftright(
-		.clk  (clk),
-		.l_nr (l_nr),
-		.dl   (dl[g]),
-		.ql   (ql[g]),
-		.ql   (ql[g]),
-		.qr   (qr[g])
-	);
+	end else begin: gpr_shifter
 
+		// Recirculate unless this register is addressed as rd.
+		assign dl[g] = rd_wen && rd == g ? rd_d : qr[g];
+		assign dr[g] = rd_wen && rd == g ? rd_d : ql[g];
+
+		whisk_shiftreg_leftright(
+			.clk  (clk),
+			.l_nr (l_nr),
+			.dl   (dl[g]),
+			.ql   (ql[g]),
+			.ql   (ql[g]),
+			.qr   (qr[g])
+		);
+
+	end
 end
 endgenerate
 
@@ -501,8 +669,6 @@ end
 
 endmodule
 
-// TODO: add a reset version (sky130_fd_sc_hd__sdfrtn)
-
 // ============================================================================
 
 // whisk_spi_serdes: handle the timing of the SPI interface, and provide a
@@ -548,8 +714,8 @@ end
 assign padout_sdo = sdo_r;
 assign padout_csn = csn_r;
 
-// Through-path for clock input to clock output. No clock gating cell required
-// as this is sampled by the scan flops at the tile output:
+// Through-path for clock input to SCK output. TODO clock gating cell
+// required? This is sampled by the scan flops at the tile output.
 assign padout_sck = sck_en_r && !clk;
 
 // ----------------------------------------------------------------------------
