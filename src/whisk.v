@@ -9,7 +9,7 @@
 // ============================================================================
 
 // whisk_cpu: top-level for the Whisk processor, minus the IO wrapper and the
-// SPI serdes
+// SPI/IOPORT serdes
 
 module whisk_cpu (
 	input  wire       clk,
@@ -59,14 +59,14 @@ reg        instr_has_imm_operand;
 // address, so that e.g. S_FETCH always has the first instruction bit
 // available on the first cycle.
 
-localparam [2:0] S_FETCH      = 2'd0; // Sample 16 instr bits, increment PC
-localparam [2:0] S_EXEC       = 2'd1; // Loop all GPRs, write one GPR
-localparam [2:0] S_PC_NONSEQ0 = 2'd2; // Issue cmd, then issue 2 PC bits
-localparam [2:0] S_PC_NONSEQ1 = 2'd3; // Issue rest of PC bits, stall 2 cycles
-localparam [2:0] S_LS_ADDR0   = 2'd4; // Issue cmd; if load, issue 2 addr bits
-localparam [2:0] S_LS_ADDR1   = 2'd5; // Issue addr; if load, stall 2 cycles
-localparam [2:0] S_LS_DATA    = 2'd6; // Issue store data, or sample load data
-localparam [2:0] S_LS_IMMPD   = 2'd7; // Re-read imm for imm post-decrement
+localparam [2:0] S_FETCH      = 3'd0; // Sample 16 instr bits, increment PC
+localparam [2:0] S_EXEC       = 3'd1; // Loop all GPRs, write one GPR
+localparam [2:0] S_PC_NONSEQ0 = 3'd2; // Issue cmd, then issue 2 PC bits
+localparam [2:0] S_PC_NONSEQ1 = 3'd3; // Issue rest of PC bits, stall 2 cycles
+localparam [2:0] S_LS_ADDR0   = 3'd4; // Issue cmd; if load, issue 2 addr bits
+localparam [2:0] S_LS_ADDR1   = 3'd5; // Issue addr; if load, stall 2 cycles
+localparam [2:0] S_LS_DATA    = 3'd6; // Issue store data, or sample load data
+localparam [2:0] S_LS_IMMPD   = 3'd7; // Re-read imm for imm post-decrement
 
 reg [3:0] bit_ctr_nxt;
 reg [2:0] state_nxt_wrap;
@@ -170,7 +170,7 @@ reg instr_has_imm_operand_nxt;
 reg instr_cond_true_nxt;
 
 // From ALU:
-wire [7:0] condition_vec8
+wire [7:0] condition_vec8;
 
 always @ (*) begin
 	instr_has_imm_operand_nxt = instr_has_imm_operand;
@@ -186,11 +186,11 @@ always @ (*) begin
 	end else if (state == S_FETCH) begin
 		if (bit_ctr == (WHISK_INSTR_RT_MSB + 1)) begin
 			// Grab rt as it goes past (this is why rt is not the MSBs!)
-			instr_has_imm_operand <= instr[W_INSTR-1 -: 3] == 3'd6;
+			instr_has_imm_operand <= instr[WHISK_W_INSTR-1 -: 3] == 3'd6;
 		end
 		if (bit_ctr == (WHISK_INSTR_COND_MSB + 1)) begin
 			// Decode condition as it goes past
-			instr_cond_true <= condition_vec8[instr[W_INSTR-1 -: 3]];
+			instr_cond_true <= condition_vec8[instr[WHISK_W_INSTR-1 -: 3]];
 		end
 	end
 end
@@ -231,7 +231,7 @@ whisk_regfile #(
 	.W (W_DATA),
 	.N (N_REGS)
 ) regfile_u (
-	.clk    (clk,
+	.clk    (clk),
 	.l_nr   (regfile_shift_l_nr),
 
 	.rd     (instr_rd),
@@ -245,7 +245,7 @@ whisk_regfile #(
 	.rs_qr  (reg_rs_qr),
 
 	.rt     (instr_rt),
-	.rt_ql  (reg_rt_ql)
+	.rt_ql  (reg_rt_ql),
 	.rt_qr  (reg_rt_qr)
 );
 
@@ -429,7 +429,7 @@ assign condition_vec8 = {
 // Deassert CSn before issuing a nonsequential address, only.
 assign mem_csn_next =
 	&bit_ctr && state_nxt_wrap == S_PC_NONSEQ0 ||
-	&bit_ctr && state_nxt_wrap == S_LS_ADDR;
+	&bit_ctr && state_nxt_wrap == S_LS_ADDR0;
 
 // Pedal to the metal on SCK except when pulling CSn for a nonsequential
 // access, or when executing an instruction with no immediate.
@@ -444,14 +444,14 @@ localparam [15:0] SPI_INSTR_WRITE = 16'h0002 << 8;
 
 wire mem_sdo_ls_addr0 =
 	instr_op_st_nld ? SPI_INSTR_WRITE[bit_ctr] :
-	&bit_ctr[3:1]   ? rs_qr                    : SPI_INSTR_READ[bit_ctr];
+	&bit_ctr[3:1]   ? reg_rs_qr                : SPI_INSTR_READ[bit_ctr];
 
 assign mem_sdo_next =
 	state == S_PC_NONSEQ0 ? (&bit_ctr[3:1] ? pc_qr : SPI_INSTR_READ[bit_ctr]) :
 	state == S_PC_NONSEQ1 ? pc_qr                                             :
 	state == S_LS_ADDR0   ? mem_sdo_ls_addr0                                  :
-	state == S_LS_ADDR1   ? (instr_op_st_nld ? rs_ql : rs_qr)                 :
-	state == S_LS_DATA    ? rd_qr                                             : 1'b0;
+	state == S_LS_ADDR1   ? (instr_op_st_nld ? reg_rs_ql : reg_rs_qr)         :
+	state == S_LS_DATA    ? reg_rd_qr                                         : 1'b0;
 
 // ----------------------------------------------------------------------------
 // Writeback
@@ -494,7 +494,7 @@ assign ioport_sck_en_next  = do_io_instr && (
 	(io_instr_out && ~&bit_ctr)
 );
 
-assign ioport_sdo_next = do_io_instr && rs_ql;
+assign ioport_sdo_next = do_io_instr && reg_rs_ql;
 
 endmodule
 
@@ -562,7 +562,9 @@ for (g = 0; g < N_PADDED; g = g + 1) begin: loop_gprs
 		assign dl[g] = rd_wen && rd == g ? rd_d : qr[g];
 		assign dr[g] = rd_wen && rd == g ? rd_d : ql[g];
 
-		whisk_shiftreg_leftright(
+		whisk_shiftreg_leftright #(
+			.W (W)
+		) reg_u (
 			.clk  (clk),
 			.l_nr (l_nr),
 			.dl   (dl[g]),
@@ -619,7 +621,7 @@ for (g = 1; g < W + 1; g = g + 1) begin: shift_stage
 	whisk_scanflop flop_u (
 		.clk (clk),
 		.sel (l_nr),
-		.d   ({chain_q[g - 1], chain_q[g + 1]})
+		.d   ({chain_q[g - 1], chain_q[g + 1]}),
 		.q   (chain_q[g])
 	);
 end
@@ -637,7 +639,7 @@ module whisk_scanflop (
 	input  wire sel,
 	input  wire [1:0] d,
 	output reg q
-)
+);
 
 `ifdef SKY130
 
@@ -701,7 +703,7 @@ reg csn_r;
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
-		sdo_r <= 1'b0
+		sdo_r <= 1'b0;
 		csn_r <= 1'b1;
 		sck_en_r <= 1'b0;
 	end else begin
@@ -752,7 +754,7 @@ assign sdi = sdi_latch;
 // Dodgy sim-only version
 
 reg padin_sdi_reg;
-always @ (negedge clk)
+always @ (negedge clk) begin
 	padin_sdi_reg <= padin_sdi;
 end
 
