@@ -136,8 +136,7 @@ ldi rd, #imm  -> add rd, zero, #imm
 j label       -> add pc, pc, @label // Assembler calculates immediate offset to label
 lda rd, label -> add rd, pc, @label // Assembler calculates immediate offset to label
 push rd       -> strib rd, sp, -2   // Store with negative increment-before
-pop rd        -> ldrda rd, sp, -2   // Load with negative decrement-after
-ret           -> ldrda pc, sp, -2
+pop rd        -> ldrda rd, sp, -2   // Load with negative decrement-after (rd != pc)
 ```
 
 ### Execution Timings

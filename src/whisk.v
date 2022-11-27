@@ -29,30 +29,75 @@ module whisk_cpu (
 	output wire       ioport_latch_o_next
 );
 
-`include "whisk_const.vh"
+// ----------------------------------------------------------------------------
+// Constants
 
-reg [15:0] instr;
+// Machine size
+localparam       W_INSTR        = 16;
+localparam       W_DATA         = 16;
+localparam       N_REGS         = 6;
 
-wire [WHISK_INSTR_OP_MSB  -WHISK_INSTR_OP_LSB  :0] instr_op;
-wire [WHISK_INSTR_COND_MSB-WHISK_INSTR_COND_LSB:0] instr_cond;
-wire [WHISK_INSTR_RT_MSB  -WHISK_INSTR_RT_LSB  :0] instr_rt;
-wire [WHISK_INSTR_RS_MSB  -WHISK_INSTR_RS_LSB  :0] instr_rs;
-wire [WHISK_INSTR_RD_MSB  -WHISK_INSTR_RD_LSB  :0] instr_rd;
+// Instruction layout
+localparam       INSTR_OP_LSB   = 0;
+localparam       INSTR_OP_MSB   = 3;
+localparam       INSTR_COND_LSB = 4;
+localparam       INSTR_COND_MSB = 6;
+localparam       INSTR_RT_LSB   = 7;
+localparam       INSTR_RT_MSB   = 9;
+localparam       INSTR_RS_LSB   = 10;
+localparam       INSTR_RS_MSB   = 12;
+localparam       INSTR_RD_LSB   = 13;
+localparam       INSTR_RD_MSB   = 15;
 
-assign {instr_rd, instr_rs, instr_rt, instr_cond, instr_op} = instr;
+// Major opcodes (instr[3:0])
+localparam [3:0] OP_ADD         = 4'h0; // rd = rs + rt
+localparam [3:0] OP_SUB         = 4'h1; // rd = rs - rt
+localparam [3:0] OP_ANDN        = 4'h2; // rd = rs & ~rt
+localparam [3:0] OP_XOR         = 4'h3; // rd = rs ^ rt
+localparam [3:0] OP_SHIFT       = 4'h4; // Minor opcode in rt
+localparam [3:0] OP_INOUT       = 4'h6; // Minor opcode in rs
 
-wire instr_op_ls     = instr_op[3]; // Whether an instruction is a ldr/str
-wire instr_op_st_nld = instr_op[2]; // Whether a ldr/str is a load or store
-wire instr_op_ls_da  = instr_op[1]; // Whether a ldr/str has decrement-after
-wire instr_op_ls_ib  = instr_op[0]; // Whether a ldr/str has increment-before
+localparam [3:0] OP_LDR         = 4'h8; //           rd = mem[rs];
+localparam [3:0] OP_LDR_IB      = 4'h9; // rs += rt; rd = mem[rs];
+localparam [3:0] OP_LDR_DA      = 4'ha; //           rd = mem[rs]; rs -= rt
+localparam [3:0] OP_LDR_IB_DA   = 4'hb; // rs += rt; rd = mem[rs]; rs -= rt
+
+localparam [3:0] OP_STR         = 4'hc; //           mem[rs] = rd;
+localparam [3:0] OP_STR_IB      = 4'hd; // rs += rt; mem[rs] = rd;
+localparam [3:0] OP_STR_DA      = 4'he; //           mem[rs] = rd; rs -= rt
+localparam [3:0] OP_STR_IB_DA   = 4'hf; // rs += rt; mem[rs] = rd; rs -= rt
+
+// Minor opcodes (rt)
+localparam [2:0] OP2_SRL        = 3'h0;
+localparam [2:0] OP2_SRA        = 3'h1;
+localparam [2:0] OP2_SLL        = 3'h4;
+
+// Minor opcodes (rs)
+localparam [2:0] OP2_IN         = 3'h0;
+localparam [2:0] OP2_OUT        = 3'h4;
 
 // ----------------------------------------------------------------------------
 // Main control state machine
 
-reg [3:0]  bit_ctr;
-reg [2:0]  state;
-reg        instr_cond_true;
-reg        instr_has_imm_operand;
+reg [W_INSTR-1:0] instr;
+
+wire [INSTR_OP_MSB  -INSTR_OP_LSB  :0] instr_op;
+wire [INSTR_COND_MSB-INSTR_COND_LSB:0] instr_cond;
+wire [INSTR_RT_MSB  -INSTR_RT_LSB  :0] instr_rt;
+wire [INSTR_RS_MSB  -INSTR_RS_LSB  :0] instr_rs;
+wire [INSTR_RD_MSB  -INSTR_RD_LSB  :0] instr_rd;
+
+assign {instr_rd, instr_rs, instr_rt, instr_cond, instr_op} = instr;
+
+wire instr_op_ls     = instr_op[3]; // Whether an instruction is a load/store
+wire instr_op_st_nld = instr_op[2]; // Whether a load/store is a load or store
+wire instr_op_ls_da  = instr_op[1]; // Whether a load/store has decrement-after
+wire instr_op_ls_ib  = instr_op[0]; // Whether a load/store has increment-before
+
+reg [3:0] bit_ctr;
+reg [2:0] state;
+reg       instr_cond_true;
+reg       instr_has_imm_operand;
 
 // Note there is a 2 cycle delay from issuing a bit on SDO to getting a bit
 // back on SDI. This is handled with a 2-cycle stall after issuing a read
@@ -181,16 +226,16 @@ always @ (*) begin
 		// additional fetch cycle so that the immediate operand is also
 		// dumped, but clear the operand flag so we don't loop forever.
 		if (&bit_ctr) begin
-			instr_has_imm_operand <= 1'b0;
+			instr_has_imm_operand_nxt = 1'b0;
 		end
 	end else if (state == S_FETCH) begin
-		if (bit_ctr == (WHISK_INSTR_RT_MSB + 1)) begin
+		if (bit_ctr == (INSTR_RT_MSB + 1)) begin
 			// Grab rt as it goes past (this is why rt is not the MSBs!)
-			instr_has_imm_operand <= instr[WHISK_W_INSTR-1 -: 3] == 3'd6;
+			instr_has_imm_operand_nxt = instr[W_INSTR-1 -: 3] == 3'd6;
 		end
-		if (bit_ctr == (WHISK_INSTR_COND_MSB + 1)) begin
+		if (bit_ctr == (INSTR_COND_MSB + 1)) begin
 			// Decode condition as it goes past
-			instr_cond_true <= condition_vec8[instr[WHISK_W_INSTR-1 -: 3]];
+			instr_cond_true_nxt = condition_vec8[instr[W_INSTR-1 -: 3]];
 		end
 	end
 end
@@ -212,33 +257,42 @@ always @ (posedge clk) begin
 end
 
 // ----------------------------------------------------------------------------
-// Regfile instantiation and direction control
+// Register file
 
 wire regfile_shift_l_nr;
 
-wire reg_rd_ql;
-wire reg_rd_qr;
-wire reg_rd_wen;
-wire reg_rd_d;
+wire reg_rd_ql, reg_rd_qr;
+wire reg_rs_ql, reg_rs_qr;
+wire reg_rt_ql, reg_rt_qr;
 
-wire reg_rs_ql;
-wire reg_rs_qr;
+wire alu_result;
 
-wire reg_rt_ql;
-wire reg_rt_qr;
+wire ls_early_postdec = state == S_PC_NONSEQ1 && instr_op_ls &&
+	instr_op_ls_da && !instr_has_imm_operand;
 
-whisk_regfile #(
+wire writeback_wen =
+	state == S_EXEC ||
+	state == S_LS_DATA && !instr_op_st_nld ||
+	state == S_PC_NONSEQ1 && ls_early_postdec ||
+	state == S_LS_IMMPD;
+
+wire writeback_data = state == S_LS_DATA ? mem_sdi_prev : alu_result;
+
+wire [INSTR_RD_MSB-INSTR_RD_LSB:0] writeback_reg =
+	instr_op_ls && state != S_LS_DATA ? instr_rs : instr_rd;
+
+regfile #(
 	.W (W_DATA),
 	.N (N_REGS)
 ) regfile_u (
 	.clk    (clk),
 	.l_nr   (regfile_shift_l_nr),
 
-	.rd     (instr_rd),
+	.rd     (writeback_reg),
 	.rd_ql  (reg_rd_ql),
 	.rd_qr  (reg_rd_qr),
-	.rd_wen (reg_rd_wen),
-	.rd_d   (reg_rd_d),
+	.rd_wen (writeback_wen),
+	.rd_d   (writeback_data),
 
 	.rs     (instr_rs),
 	.rs_ql  (reg_rs_ql),
@@ -276,7 +330,7 @@ whisk_regfile #(
 //   cycle of LS_ADDR1, store data follows immmediately in LS_DATA. Rotate
 //   left for entirety of LS_ADDR1, use regfile ql as output.
 
-wire instr_is_right_shift = instr_op == WHISK_OP_SHIFT && !instr_rt[2];
+wire instr_is_right_shift = instr_op == OP_SHIFT && !instr_rt[2];
 
 assign regfile_shift_l_nr =
 	state == S_EXEC && instr_is_right_shift ? 1'b1                                :
@@ -295,7 +349,7 @@ wire pc_qr;
 wire pc_dr;
 wire pc_ql;
 
-whisk_shiftreg_leftright #(
+shiftreg_leftright #(
 	.W (16)
 ) pc_u (
 	.clk  (clk),
@@ -378,21 +432,18 @@ wire [1:0] alu_shift = {
 	|bit_ctr ? alu_ci : reg_rs_ql && instr_rt[0]
 };
 
-wire ls_early_postdec = state == S_PC_NONSEQ1 && instr_op_ls &&
-	instr_op_ls_da && !instr_has_imm_operand;
-
-wire alu_co, alu_result;
+wire alu_co;
 assign {alu_co, alu_result} =
 	state == S_LS_IMMPD           ? alu_sub           :
 	ls_early_postdec              ? alu_sub           :
 	// state == S_EXEC:
 	instr_op_ls && instr_op_ls_ib ? alu_add           :
-	instr_op == WHISK_OP_ADD      ? alu_add           :
-	instr_op == WHISK_OP_SUB      ? alu_sub           :
-	instr_op == WHISK_OP_ANDN     ? op_s && !op_t     :
-	instr_op == WHISK_OP_XOR      ? op_s ^ op_t       :
-	instr_op == WHISK_OP_SHIFT    ? alu_shift         :
-	instr_op == WHISK_OP_INOUT    ? ioport_sdi_prev   : reg_rd_qr;
+	instr_op == OP_ADD            ? alu_add           :
+	instr_op == OP_SUB            ? alu_sub           :
+	instr_op == OP_ANDN           ? op_s && !op_t     :
+	instr_op == OP_XOR            ? op_s ^ op_t       :
+	instr_op == OP_SHIFT          ? alu_shift         :
+	instr_op == OP_INOUT          ? ioport_sdi_prev   : reg_rd_qr;
 
 always @ (posedge clk) begin
 	alu_ci <= alu_co;
@@ -448,53 +499,42 @@ wire mem_sdo_ls_addr0 =
 
 assign mem_sdo_next =
 	state == S_PC_NONSEQ0 ? (&bit_ctr[3:1] ? pc_qr : SPI_INSTR_READ[bit_ctr]) :
-	state == S_PC_NONSEQ1 ? pc_qr                                             :
+	state == S_PC_NONSEQ1 ? pc_qr && instr_cond_true                          :
 	state == S_LS_ADDR0   ? mem_sdo_ls_addr0                                  :
 	state == S_LS_ADDR1   ? (instr_op_st_nld ? reg_rs_ql : reg_rs_qr)         :
 	state == S_LS_DATA    ? reg_rd_qr                                         : 1'b0;
 
 // ----------------------------------------------------------------------------
-// Writeback
-
-assign reg_rd_wen =
-	state == S_EXEC ||
-	(state == S_LS_DATA && !instr_op_st_nld) ||
-	state == S_PC_NONSEQ1 && ls_early_postdec ||
-	state == S_LS_IMMPD;
-
-assign reg_rd_d = state == S_LS_DATA ? mem_sdi_prev : alu_result;
-
-// ----------------------------------------------------------------------------
 // IO port
 
-// Expected IO setup is a 1x 8-bit PISO shift register for input, and 2x 8-bit
-// SIPO shift registers for output:
+// Expected hardware is a 1x 8-bit PISO, and 2x 8-bit SIPO shift registers:
 //
-// - IN: A latch_i pulse, then 8 clocks, sampling 8 data bits. Input is in the
-//   8 MSBs of the destination register (sorry!), garbage in LSBs.
+// - OUT: clock out 16 bits from rt[15:0]/imm[15:0], then a latch_o pulse
 //
-// - OUT: 15 clocks with data, then a latch_o pulse. Only 15 clocks to avoid
-//   an additional flop for delaying latch_o, so only 15 bits are usable.
+// - IN: A latch_i pulse, then clock 8 bits into rd[15:8] (MSBs! Sorry!)
 //
 // The IN interface is still driven when executing an OUT, with more clocks.
-// Abusable for a few extra inputs with another PISO shift register.
+// Abusable for 6 extra inputs if a second PISO register is chained.
 //
-// Some data is still clocked out on an IN, there's just no latch_o pulse.
+// rt[13:6] is actually clocked out on an IN, there's just no latch_o pulse.
 // Abusable to drive longer SIPO chains using multiple INs and a final OUT.
 
-wire do_io_instr = state == S_EXEC && instr_op == WHISK_OP_INOUT;
+wire exec_io_instr = state == S_EXEC && instr_op == OP_INOUT;
+wire io_instr_out = (instr_rs & (OP2_OUT | OP2_IN)) == OP2_OUT;
 
-wire io_instr_out = (instr_rt & (WHISK_OP2_OUT | WHISK_OP2_IN)) == WHISK_OP2_OUT;
+// The instruction is still valid on the first cycle of FETCH. This lets us
+// latch outputs *after* the last clock pulse, without spending a flop.
+assign ioport_latch_o_next = state == S_FETCH && ~|bit_ctr &&
+	instr_op == OP_INOUT && io_instr_out && instr_cond_true;
 
-assign ioport_latch_i_next = do_io_instr && ~|bit_ctr;
-assign ioport_latch_o_next = do_io_instr && io_instr_out && &bit_ctr;
+assign ioport_latch_i_next = exec_io_instr && ~|bit_ctr;
 
-assign ioport_sck_en_next  = do_io_instr && (
+assign ioport_sdo_next = exec_io_instr && reg_rs_ql;
+
+assign ioport_sck_en_next  = exec_io_instr && (
 	(bit_ctr >= 4'h6 && bit_ctr < 4'he) ||
-	(io_instr_out && ~&bit_ctr)
+	io_instr_out
 );
-
-assign ioport_sdo_next = do_io_instr && reg_rs_ql;
 
 endmodule
 
