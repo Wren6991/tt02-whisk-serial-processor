@@ -1,15 +1,214 @@
 // ============================================================================
 // Whisk: a 16-bit bit-serial RISC processor (c) Luke Wren 2022
-// Designed in a hurry for Tiny Tapeout 2
 // SPDX-License-Identifier: Apache-2.0
 // ============================================================================
 
+// Whisk is a 16-bit bit-serial processor, with external SPI SRAM interface,
+// designed in a hurry for Tiny Tapeout 2. See README.md for an overview of
+// the instruction set. Supporting hardware:
+//
+// - SPI SRAM with sequential mode and 16-bit addressing, e.g. Microchip
+//   23K256T-I (32 kiB SRAM)
+//
+// - One 8-bit parallel-to-serial shift register, for input port
+//
+// - Two 8-bit serial-to-parallel shift registers, for output port
+//
+// - A host device capable of loading the SPI SRAM, setting it to sequential
+//   mode, and releasing Whisk's reset. I'll probably use a Pico.
+//
+// There will be a board with all of these components ready for bringup, and
+// it will be added to this repository (also I will probably make a few of
+// them, and will gladly send you one if you ask). However this will not be
+// done before tapeout, as I started this project a week before the
+// deadline!
+
+`ifdef WHISK_DEFAULT_NETTYPE_NONE
 `default_nettype none
+`endif
+
+`ifndef WHISK_NO_CELLS
+`define WHISK_CELLS_SKY130
+`endif
 
 // ============================================================================
+// Module whisk_tt2_io_wrapper: Top level for TT2 synthesis. instantiate
+// whisk_top, and map named ports to numbered TT2 input/output ports.
+// ============================================================================
 
-// whisk_cpu: top-level for the Whisk processor, minus the IO wrapper and the
-// SPI/IOPORT serdes
+module whisk_tt2_io_wrapper (
+	input  wire [7:0] io_i,
+	output wire [7:0] io_o
+);
+
+// Global signals
+wire io_clk = io_i[0];
+wire io_rst_n = io_i[1];
+
+// SPI memory interface
+wire io_mem_sdi = io_i[2];
+
+wire io_mem_csn;
+wire io_mem_sck;
+wire io_mem_sdo;
+
+assign io_o[0] = io_mem_csn;
+assign io_o[1] = io_mem_sck;
+assign io_o[2] = io_mem_sdo;
+
+// IO port (shift register interface)
+wire io_ioport_sdi = io_i[3];
+
+wire io_ioport_sck;
+wire io_ioport_sdo;
+wire io_ioport_latch_i;
+wire io_ioport_latch_o;
+
+assign io_o[3] = io_ioport_sck;
+assign io_o[4] = io_ioport_sdo;
+assign io_o[5] = io_ioport_latch_i;
+assign io_o[6] = io_ioport_latch_o;
+
+whisk_top top_u (
+	.io_clk            (io_clk),
+	.io_rst_n          (io_rst_n),
+
+	.io_mem_sdi        (io_mem_sdi),
+	.io_mem_csn        (io_mem_csn),
+	.io_mem_sck        (io_mem_sck),
+	.io_mem_sdo        (io_mem_sdo),
+
+	.io_ioport_sdi     (io_ioport_sdi),
+	.io_ioport_sck     (io_ioport_sck),
+	.io_ioport_sdo     (io_ioport_sdo),
+	.io_ioport_latch_i (io_ioport_latch_i),
+	.io_ioport_latch_o (io_ioport_latch_o)
+);
+
+endmodule
+
+// ============================================================================
+// Module whisk_top: instantiate the CPU core together with the SPI mem
+// serdes and IO port serdes.
+// ============================================================================
+
+module whisk_top (
+	input  wire io_clk,
+	input  wire io_rst_n,
+
+	input  wire io_mem_sdi,
+	output wire io_mem_csn,
+	output wire io_mem_sck,
+	output wire io_mem_sdo,
+
+	input  wire io_ioport_sdi,
+	output wire io_ioport_sck,
+	output wire io_ioport_sdo,
+	output wire io_ioport_latch_i,
+	output wire io_ioport_latch_o
+);
+
+// ----------------------------------------------------------------------------
+// Clock/reset wrangling
+
+// Buffer the clock input (Maybe remove this, was sort of hoping I could time
+// from this named cell but looks like we can't add our own constraints?)
+wire clk;
+
+`ifdef WHISK_CELLS_SKY130
+sky130_fd_sc_hd__clkbuf_2 clkroot_clk_u (
+    .A          (io_clk),
+    .X          (clk),
+    .VPWR       (1'b1),
+    .VGND       (1'b0)
+);
+`else
+assign clk = io_clk;
+`endif
+
+// Synchronise reset removal to buffered clock
+reg [1:0] reset_sync;
+wire rst_n = reset_sync[1];
+
+always @ (posedge clk or negedge io_rst_n) begin
+	if (!io_rst_n) begin
+		reset_sync <= 2'd00;
+	end else begin
+		reset_sync <= ~(~reset_sync << 1);
+	end
+end
+
+// ----------------------------------------------------------------------------
+// Processor instantiation
+
+wire mem_sck_en_next;
+wire mem_sdo_next;
+wire mem_csn_next;
+wire mem_sdi_prev;
+
+wire ioport_sck_en_next;
+wire ioport_sdo_next;
+wire ioport_sdi_prev;
+wire ioport_latch_i_next;
+wire ioport_latch_o_next;
+
+whisk_cpu cpu (
+	.clk                 (clk),
+	.rst_n               (rst_n),
+
+	.mem_sck_en_next     (mem_sck_en_next),
+	.mem_sdo_next        (mem_sdo_next),
+	.mem_csn_next        (mem_csn_next),
+	.mem_sdi_prev        (mem_sdi_prev),
+
+	.ioport_sck_en_next  (ioport_sck_en_next),
+	.ioport_sdo_next     (ioport_sdo_next),
+	.ioport_sdi_prev     (ioport_sdi_prev),
+	.ioport_latch_i_next (ioport_latch_i_next),
+	.ioport_latch_o_next (ioport_latch_o_next)
+);
+
+// ----------------------------------------------------------------------------
+// Serdes (IO registers)
+
+whisk_spi_serdes mem_serdes_u (
+	.clk        (clk),
+	.rst_n      (rst_n),
+
+	.sdo        (mem_sdo_next),
+	.sck_en     (mem_sck_en_next),
+	.csn        (mem_csn_next),
+	.sdi        (mem_sdi_prev),
+
+	.padout_sck (io_mem_sck),
+	.padout_csn (io_mem_csn),
+	.padout_sdo (io_mem_sdo),
+	.padin_sdi  (io_mem_sdi)
+);
+
+whisk_ioport_serdes io_serdes_u (
+	.clk             (clk),
+	.rst_n           (rst_n),
+
+	.sdo             (ioport_sdo_next),
+	.sck_en          (ioport_sck_en_next),
+	.latch_i         (ioport_latch_i_next),
+	.latch_o         (ioport_latch_o_next),
+	.sdi             (ioport_sdi_prev),
+
+	.padout_sdo      (io_ioport_sdo),
+	.padout_sck      (io_ioport_sck),
+	.padout_latchn_i (io_ioport_latch_i),
+	.padout_latchn_o (io_ioport_latch_o),
+	.padin_sdi       (io_ioport_sdi)
+);
+
+endmodule
+
+// ============================================================================
+// Module whisk_cpu: top-level for the Whisk processor, minus the IO wrapper
+// and the SPI/IOPORT serdes
+// ============================================================================
 
 module whisk_cpu (
 	input  wire       clk,
@@ -113,13 +312,14 @@ localparam [2:0] S_LS_ADDR1   = 3'd5; // Issue addr; if load, stall 2 cycles
 localparam [2:0] S_LS_DATA    = 3'd6; // Issue store data, or sample load data
 localparam [2:0] S_LS_IMMPD   = 3'd7; // Re-read imm for imm post-decrement
 
+reg [3:0] bit_ctr_nxt_wrap;
 reg [3:0] bit_ctr_nxt;
 reg [2:0] state_nxt_wrap;
 reg [2:0] state_nxt;
 
 always @ (*) begin
-	bit_ctr_nxt = bit_ctr + 4'h1;
 	state_nxt_wrap = state;
+	bit_ctr_nxt_wrap = bit_ctr + 4'h1;
 	case (state)
 		S_FETCH: begin
 			if (!instr_cond_true) begin
@@ -128,7 +328,7 @@ always @ (*) begin
 			end else if (instr_op_ls && !instr_op_ls_ib) begin
 				// Load/store with no preincrement, go straight to address state
 				state_nxt_wrap = S_LS_ADDR0;
-				bit_ctr_nxt = instr_op_st_nld ? 4'h8 : 4'h6;
+				bit_ctr_nxt_wrap = instr_op_st_nld ? 4'h8 : 4'h6;
 			end else begin
 				state_nxt_wrap = S_EXEC;
 			end
@@ -136,10 +336,10 @@ always @ (*) begin
 		S_EXEC: begin
 			if (instr_op_ls) begin
 				state_nxt_wrap = S_LS_ADDR0;
-				bit_ctr_nxt = instr_op_st_nld ? 4'h8 : 4'h6;
+				bit_ctr_nxt_wrap = instr_op_st_nld ? 4'h8 : 4'h6;
 			end else if (instr_rd == 3'd7) begin
 				state_nxt_wrap = S_PC_NONSEQ0;
-				bit_ctr_nxt = 4'h6;
+				bit_ctr_nxt_wrap = 4'h6;
 			end else begin
 				state_nxt_wrap = S_FETCH;
 			end
@@ -165,14 +365,15 @@ always @ (*) begin
 		end
 		S_LS_DATA: begin
 			state_nxt_wrap = S_PC_NONSEQ0;
-			bit_ctr_nxt = 4'h6;
+			bit_ctr_nxt_wrap = 4'h6;
 		end
 		S_LS_IMMPD: begin
 			state_nxt = S_PC_NONSEQ0;
-			bit_ctr_nxt = 4'h6;
+			bit_ctr_nxt_wrap = 4'h6;
 		end
 	endcase
-	state_nxt = &bit_ctr ? state_nxt_wrap : state;
+	state_nxt   = &bit_ctr ? state_nxt_wrap   : state;
+	bit_ctr_nxt = &bit_ctr ? bit_ctr_nxt_wrap : bit_ctr + 4'h1;
 end
 
 // Start of day:
@@ -192,7 +393,7 @@ end
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		state <= S_PC_NONSEQ0;
-		bit_ctr <= 4'h5;
+		bit_ctr <= 4'h6;
 	end else begin
 		state <= state_nxt;
 		bit_ctr <= bit_ctr_nxt;
@@ -281,7 +482,7 @@ wire writeback_data = state == S_LS_DATA ? mem_sdi_prev : alu_result;
 wire [INSTR_RD_MSB-INSTR_RD_LSB:0] writeback_reg =
 	instr_op_ls && state != S_LS_DATA ? instr_rs : instr_rd;
 
-regfile #(
+whisk_regfile #(
 	.W (W_DATA),
 	.N (N_REGS)
 ) regfile_u (
@@ -349,7 +550,7 @@ wire pc_qr;
 wire pc_dr;
 wire pc_ql;
 
-shiftreg_leftright #(
+whisk_shiftreg_leftright #(
 	.W (16)
 ) pc_u (
 	.clk  (clk),
@@ -490,8 +691,9 @@ assign mem_sck_en_next = !(
 );
 
 // ldr issues addresses two cycles earlier than str, due to in->out delay.
-localparam [15:0] SPI_INSTR_READ  = 16'h0003 << 6;
-localparam [15:0] SPI_INSTR_WRITE = 16'h0002 << 8;
+// Note SPI commands are MSB-first (the commands here are 03h and 02h).
+localparam [15:0] SPI_INSTR_READ  = 16'hc000 >> 2;
+localparam [15:0] SPI_INSTR_WRITE = 16'h8000;
 
 wire mem_sdo_ls_addr0 =
 	instr_op_st_nld ? SPI_INSTR_WRITE[bit_ctr] :
@@ -539,11 +741,12 @@ assign ioport_sck_en_next  = exec_io_instr && (
 endmodule
 
 // ============================================================================
+// Module whisk_regfile: a register file of multiple shift registers, with 3
+// read ports (rd/rs/rt) and one write port (rd).
+// ============================================================================
 
-// whisk_regfile: a register file of multiple shift registers, with 3 read
-// ports (rd/rs/rt) and one write port (rd). No enable, so try to do things
-// in multiples of 16 cycles. Registers not being written to are
-// recirculated.
+// No enable, so try to do things in multiples of 16 cycles. Registers not
+// being written to are recirculated.
 //
 // qr is the value of the rightmost flop in a shift register (usually what you
 // want when shifting out to right) and ql is the value of the leftmost flop
@@ -620,20 +823,20 @@ endgenerate
 endmodule
 
 // ============================================================================
+// Module whisk_shiftreg_leftright: a shift register that always shifts left
+// or right each cycle.
+// ============================================================================
 
-// whisk_shiftreg_leftright: a shift register that always shifts left or right
-// each cycle.
-//
 // Note there is no enable because the underlying scan flops do not have an
 // enable (there is an enable version, but it's larger, and more routing
 // required!). If you don't want to shift, just shift back and forth for an
 // even number of cycles, or do a full loop :) Shifting by an odd number of
 // bits in an even number of cycles requires a delay flop to be patched in.
 //
-// dl and ql are the leftmost inputs and outputs. If l_nr is high (left), ql
-// becomes dl on every posedge of clk.
+// dl and ql are the leftmost inputs and outputs. If l_nr is low (right), ql
+// becomes dl on every posedge of clk. (Yes, it's confusing!)
 //
-// dr and qr are the rightmost inputs and outputs. If l_nr is low (right), qr
+// dr and qr are the rightmost inputs and outputs. If l_nr is high (left), qr
 // becomes dr on every posedge of clk.
 
 module whisk_shiftreg_leftright #(
@@ -649,15 +852,16 @@ module whisk_shiftreg_leftright #(
 
 wire [W+1:0] chain_q;
 
-assign chain_q[0    ] = dl;
-assign chain_q[W + 1] = dr;
+assign chain_q[0    ] = dr;
+assign chain_q[W + 1] = dl;
 
-assign ql = chain_q[1];
-assign qr = chain_q[W];
+assign qr = chain_q[1];
+assign ql = chain_q[W];
 
 genvar g;
 generate
 for (g = 1; g < W + 1; g = g + 1) begin: shift_stage
+	// Shift-to-left means select the input to your right, and vice versa.
 	whisk_scanflop flop_u (
 		.clk (clk),
 		.sel (l_nr),
@@ -670,9 +874,9 @@ endgenerate
 endmodule
 
 // ============================================================================
-
-// whisk_scanflop: a flop with a mux on its input. Usually reserved for DFT
-// scan insertion, but we don't need that where we're going >:)
+// Module whisk_scanflop: a flop with a mux on its input. Usually reserved
+// for DFT scan insertion, but we don't need that where we're going >:)
+// ============================================================================
 
 module whisk_scanflop (
 	input  wire clk,
@@ -681,7 +885,7 @@ module whisk_scanflop (
 	output reg q
 );
 
-`ifdef SKY130
+`ifdef WHISK_CELLS_SKY130
 
 // (scanchain in TT2 uses sky130_fd_sc_hd__sdfxtp, a simple flop with scan
 // mux. An enable version, sky130_fd_sc_hd__sedfxtp, is also available, but
@@ -712,10 +916,10 @@ end
 endmodule
 
 // ============================================================================
-
-// whisk_spi_serdes: handle the timing of the SPI interface, and provide a
-// slightly abstracted interface to the whisk core, with all signals on
-// posedge of clk.
+// Module whisk_spi_serdes: handle the timing of the SPI interface, and
+// provide a slightly abstracted interface to the whisk core, with all
+// signals on posedge of clk.
+// ============================================================================
 
 module whisk_spi_serdes(
 	input  wire clk,
@@ -763,7 +967,7 @@ assign padout_sck = sck_en_r && !clk;
 // ----------------------------------------------------------------------------
 // Input paths
 
-`ifdef SKY130
+`ifdef WHISK_CELLS_SKY130
 
 // ASIC version
 
@@ -803,3 +1007,125 @@ assign sdi = padin_sdi_reg;
 `endif
 
 endmodule
+
+// ============================================================================
+// Module whisk_ioport_serdes: similar to whisk_spi_serdes, but for the
+// shift-register-based IO port.
+// ============================================================================
+
+module whisk_ioport_serdes(
+	input  wire clk,
+	input  wire rst_n,
+
+	// Core
+	input  wire sdo,
+	input  wire sck_en,
+	input  wire latch_i,
+	input  wire latch_o,
+	output wire sdi,
+
+	// IOs
+	output wire padout_sdo,
+	output wire padout_sck,
+	output wire padout_latchn_i,
+	output wire padout_latchn_o,
+	input  wire padin_sdi
+);
+
+// ----------------------------------------------------------------------------
+// Output paths
+
+reg sdo_r;
+reg sck_en_r;
+reg latch_i_r;
+reg latch_o_r;
+
+always @ (posedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		sdo_r <= 1'b0;
+		sck_en_r <= 1'b0;
+		latch_i_r <= 1'b1;
+		latch_o_r <= 1'b1;
+	end else begin
+		sdo_r <= sdo;
+		sck_en_r <= sck_en;
+		// Active-low on the way out:
+		latch_i_r <= !latch_i;
+		latch_o_r <= !latch_o;
+	end
+end
+
+assign padout_sdo = sdo_r;
+assign padout_latchn_i = latch_i_r;
+assign padout_latchn_o = latch_o_r;
+
+// TODO clock gating cell?
+assign padout_sck = sck_en_r && !clk;
+
+// ----------------------------------------------------------------------------
+// Input paths
+
+// FIXME this is actually different from SPI, right? Probably transitions on
+// posedge? Need to find some actual datasheets for candidate shift
+// registers.
+
+`ifdef WHISK_CELLS_SKY130
+
+// ASIC version
+
+// TODO find a suitable delay buffer cell for hold buffering, and decide how to
+// dimension it against i[7:0] skew
+
+// TODO find a suitable latch cell (possibly sky130_fd_sc_hd__dlxtp)
+
+wire padin_sdi_delay;
+
+delay_buf_dummy_find_a_cell (
+	.i (padin_sdi),
+	.z (padin_sdi_delay)
+);
+
+reg sdi_latch;
+
+always @ (*) begin
+	if (clk) begin
+		sdi_latch <= padin_sdi_delay;
+	end
+end
+
+assign sdi = sdi_latch;
+
+`else
+
+// Dodgy sim-only version
+
+reg padin_sdi_reg;
+always @ (negedge clk) begin
+	padin_sdi_reg <= padin_sdi;
+end
+
+assign sdi = padin_sdi_reg;
+
+`endif
+
+endmodule
+
+// ============================================================================
+// 
+//           _     _     _    
+//          | |   (_)   | |   
+// __      _| |__  _ ___| | __
+// \ \ /\ / / '_ \| / __| |/ /
+//  \ V  V /| | | | \__ \   < 
+//   \_/\_/ |_| |_|_|___/_|\_\
+//                            
+//
+// When I was 16 I designed a 7400-series breadboard processor called Fork,
+// with a language called Spoon. Now I'm 26 and I'm designing a processor
+// called Whisk. I wonder what I'll do when I grow up.
+//
+// Many mistakes were made in this ISA. What did you think? My aim with this
+// version of Whisk is to run enough software to discover exactly why my
+// instruction set is bad. Hopefully Tiny Tapeout 3 will bring faster IOs,
+// with 2D muxing instead of a scan chain, and then I can try getting some
+// serious software running on Whisk v2, at a few MHz instead of 12 kHz.

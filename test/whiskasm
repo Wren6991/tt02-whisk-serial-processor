@@ -92,6 +92,15 @@ def next_word(l, i):
 		raise Exception(f"Unexpected EOL on line '{' '.join(l)}'")
 	return i + 1
 
+def get_immediate(l, w):
+	try:
+		imm = int(w, 0)
+	except:
+		raise Exception(f"Invalid integer literal '{w}' on line '{l}'")
+	if imm < -1 << 15 or imm > (1 << 16) - 1:
+		raise Exception(f"Immediate operand '{w}' is out of range on line '{l_full}'")
+	return imm & 0xffff
+
 def assemble(lines):
 	output = []
 	disasm = []
@@ -109,6 +118,17 @@ def assemble(lines):
 			if l[0] in labels:
 				raise Exception(f"Duplicate label '{l[0]}' on line '{l_full}'")
 			labels[l[0]] = len(output)
+			continue
+
+		if l[0] == "." and len(l) > 1:
+			if l[1] == "hword":
+				if len(l) != 3:
+					raise Exception(f"Need argument for directive on line '{l_full}'")
+				imm = get_immediate(l_full, l[2])
+				output.append(imm)
+				disasm.append((imm, l_full))
+			else:
+				raise Exception(f"Unrecognised directive '{l[1]}' on line '{l_full}'")
 			continue
 
 		if l[0] not in INSTR:
@@ -147,20 +167,17 @@ def assemble(lines):
 			i = next_word(l, i)
 			if l[i] == "@":
 				i = next_word(l, i)
-				opc |= 6 << INSTR_RS_LSB
+				opc |= 6 << INSTR_RT_LSB
 				imm_operand = 0
 				relocs.append((len(output) + 1, l[i]))
 			elif l[i] == "#":
 				i = next_word(l, i)
-				opc |= 6 << INSTR_RS_LSB
-				imm_operand = int(l[i], 0)
-				if imm_operand < -1 << 15 or imm_operand > (1 << 16) - 1:
-					raise Exception(f"Immediate operand '{l[i]}' is out of range on line '{l_full}'")
-				imm_operand = imm_operand & 0xffff
+				opc |= 6 << INSTR_RT_LSB
+				imm_operand = get_immediate(l_full, l[i])
 			else:
 				if l[i] not in REGS:
 					raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
-				opc |= REGS[l[i]] << INSTR_RS_LSB
+				opc |= REGS[l[i]] << INSTR_RT_LSB
 
 		if i < len(l) - 1:
 			raise Exception(f"Garbage at end of line '{l[i]}'")
@@ -175,7 +192,9 @@ def assemble(lines):
 	for src, lname in relocs:
 		if lname not in labels:
 			raise Exception(f"Could not find a matching label: '{lname}'")
-		output[src] = (labels[lname] - src) * 2 & 0xffff
+		offset = (labels[lname] - src) * 2 & 0xffff
+		output[src] = offset
+		disasm[src] = (offset, f"<reloc:{lname}>")
 	return output, labels, disasm
 
 if __name__ == "__main__":
@@ -195,6 +214,13 @@ if __name__ == "__main__":
 		else:
 			with open(args.dst, "wb") as dstfile:
 				for instr in instrs:
+					# Bit swap! All data/instructions are LSB-first, but SPI
+					# SRAM is traditionally treated as MSB-first. We only do
+					# this swap for the final .bin file: elsewhere we render
+					# our bytes in their correct natural bit order.
+					instr = ((instr & 0xf0f0) >> 4) | ((instr & 0x0f0f) << 4)
+					instr = ((instr & 0xcccc) >> 2) | ((instr & 0x3333) << 2)
+					instr = ((instr & 0xaaaa) >> 1) | ((instr & 0x5555) << 1)
 					dstfile.write(bytes((instr & 0xff, (instr >> 8) & 0xff)))
 
 	if args.map is not None:
