@@ -521,15 +521,16 @@ whisk_regfile #(
 //   amount always increments or decrements.) Get around this by using qr/ql
 //   outputs of regfile.
 //
-// - Loads: Read address MSB-first. LSB must be available on penultimate cycle
-//   of LS_ADDR1, so load data is available first cycle of LS_DATA. Shift to
-//   left for last 2 cycles of ADDR0 and first 14 cycles of ADDR1, output is
-//   qr. Jiggle back and forth for remaining cycles to keep 2-cycle shift sum
-//   at 0.
+// - Loads: Read address MSB-first (shift to left). MSB must be available on
+//   final cycle of LS_ADDR0. LSB must be available on penultimate cycle of
+//   LS_ADDR1, so that load data is available first cycle of LS_DATA. Shift
+//   to left for last 2 cycles of ADDR0 and first 14 cycles of ADDR1, output
+//   is qr. Jiggle back and forth for remaining cycles to keep 2-cycle shift
+//   sum at 0.
 //
-// - Stores: Read address MSB-first. LSB of address must be available on final
-//   cycle of LS_ADDR1, store data follows immmediately in LS_DATA. Rotate
-//   left for entirety of LS_ADDR1, use regfile ql as output.
+// - Stores: Read address MSB-first (shift to left). LSB of address must be
+//   available on final cycle of LS_ADDR1, store data follows immmediately in
+//   LS_DATA. Rotate left for entirety of LS_ADDR1, output is ql.
 
 wire instr_is_right_shift = instr_op == OP_SHIFT && !instr_rt[2];
 
@@ -541,8 +542,6 @@ assign regfile_shift_l_nr =
 
 // ----------------------------------------------------------------------------
 // Program counter
-
-wire alu_out;
 
 wire pc_l_nr;
 wire pc_dl;
@@ -556,9 +555,9 @@ whisk_shiftreg_leftright #(
 	.clk  (clk),
 	.l_nr (pc_l_nr),
 	.dl   (pc_dl),
-	.qr   (pc_qr),
 	.dr   (pc_dr),
-	.ql   (pc_ql)
+	.ql   (pc_ql),
+	.qr   (pc_qr)
 );
 
 // We increment PC at the following times, noting that at the beginning of
@@ -605,24 +604,23 @@ assign pc_dr = pc_ql;
 assign pc_dl =
 	state == S_FETCH                                           ? pc_sum       :
 	state == S_EXEC    && instr_rd != 3'd7                     ? pc_sum       :
-	state == S_EXEC    && instr_rd == 3'd7                     ? alu_out      :
+	state == S_EXEC    && instr_rd == 3'd7                     ? alu_result   :
 	state == S_LS_DATA && instr_rd == 3'd7 && !instr_op_st_nld ? mem_sdi_prev :
 	state == S_LS_IMMPD                                        ? pc_sum       : pc_qr;
-
 
 // ----------------------------------------------------------------------------
 // ALU
 
-wire op_s =
-	instr_rs == 3'd7 ? pc_qr        :
-	instr_rs == 3'd6 ? mem_sdi_prev : reg_rs_qr;
+wire alu_op_s =
+	instr_rs == 3'd7 ? pc_qr        : reg_rs_qr;
 
-wire op_t =
-	instr_rs == 3'd7 ? pc_qr        : reg_rt_qr;
+wire alu_op_t =
+	instr_rt == 3'd7 ? pc_qr        :
+	instr_rt == 3'd6 ? mem_sdi_prev : reg_rt_qr;
 
 reg alu_ci;
-wire [1:0] alu_add = op_s +  op_t + (~|bit_ctr ? 1'b0 : alu_ci);
-wire [1:0] alu_sub = op_s + !op_t + (~|bit_ctr ? 1'b1 : alu_ci);
+wire [1:0] alu_add = alu_op_s +  alu_op_t + (~|bit_ctr ? 1'b0 : alu_ci);
+wire [1:0] alu_sub = alu_op_s + !alu_op_t + (~|bit_ctr ? 1'b1 : alu_ci);
 
 // Shift uses the ALU carry flop as a 1-cycle delay. SRL/SRA rotate the
 // regfile to the left, SLL rotates the regfile to the right, and the delay
@@ -635,16 +633,16 @@ wire [1:0] alu_shift = {
 
 wire alu_co;
 assign {alu_co, alu_result} =
-	state == S_LS_IMMPD           ? alu_sub           :
-	ls_early_postdec              ? alu_sub           :
+	state == S_LS_IMMPD           ? alu_sub               :
+	ls_early_postdec              ? alu_sub               :
 	// state == S_EXEC:
-	instr_op_ls && instr_op_ls_ib ? alu_add           :
-	instr_op == OP_ADD            ? alu_add           :
-	instr_op == OP_SUB            ? alu_sub           :
-	instr_op == OP_ANDN           ? op_s && !op_t     :
-	instr_op == OP_XOR            ? op_s ^ op_t       :
-	instr_op == OP_SHIFT          ? alu_shift         :
-	instr_op == OP_INOUT          ? ioport_sdi_prev   : reg_rd_qr;
+	instr_op_ls && instr_op_ls_ib ? alu_add               :
+	instr_op == OP_ADD            ? alu_add               :
+	instr_op == OP_SUB            ? alu_sub               :
+	instr_op == OP_ANDN           ? alu_op_s && !alu_op_t :
+	instr_op == OP_XOR            ? alu_op_s ^ alu_op_t   :
+	instr_op == OP_SHIFT          ? alu_shift             :
+	instr_op == OP_INOUT          ? ioport_sdi_prev       : reg_rd_qr;
 
 always @ (posedge clk) begin
 	alu_ci <= alu_co;
@@ -679,9 +677,10 @@ assign condition_vec8 = {
 // Memory SPI controls
 
 // Deassert CSn before issuing a nonsequential address, only.
-assign mem_csn_next =
-	&bit_ctr && state_nxt_wrap == S_PC_NONSEQ0 ||
-	&bit_ctr && state_nxt_wrap == S_LS_ADDR0;
+assign mem_csn_next = bit_ctr == 4'h6 && (
+	state == S_PC_NONSEQ0 ||
+	state == S_LS_ADDR0
+);
 
 // Pedal to the metal on SCK except when pulling CSn for a nonsequential
 // access, or when executing an instruction with no immediate.
@@ -690,21 +689,26 @@ assign mem_sck_en_next = !(
 	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && !instr_has_imm_operand
 );
 
-// ldr issues addresses two cycles earlier than str, due to in->out delay.
-// Note SPI commands are MSB-first (the commands here are 03h and 02h).
-localparam [15:0] SPI_INSTR_READ  = 16'hc000 >> 2;
+// ldr issues addresses one cycle earlier than str, due to in->out delay.
+// Note: SPI commands are MSB-first (the commands here are 03h and 02h).
+localparam [15:0] SPI_INSTR_READ  = 16'hc000 >> 1;
 localparam [15:0] SPI_INSTR_WRITE = 16'h8000;
+
+// See notes on shift direction in register file section. We are shifting to
+// left to get MSB-first addr, but since load addresses are a cycle early,
+// they end up using the qr output to get even register lag on an odd cycle.
+wire ls_addr = instr_op_st_nld ? reg_rs_ql : reg_rs_qr;
 
 wire mem_sdo_ls_addr0 =
 	instr_op_st_nld ? SPI_INSTR_WRITE[bit_ctr] :
-	&bit_ctr[3:1]   ? reg_rs_qr                : SPI_INSTR_READ[bit_ctr];
+	&bit_ctr        ? ls_addr                  : SPI_INSTR_READ[bit_ctr];
 
 assign mem_sdo_next =
-	state == S_PC_NONSEQ0 ? (&bit_ctr[3:1] ? pc_qr : SPI_INSTR_READ[bit_ctr]) :
-	state == S_PC_NONSEQ1 ? pc_qr && instr_cond_true                          :
-	state == S_LS_ADDR0   ? mem_sdo_ls_addr0                                  :
-	state == S_LS_ADDR1   ? (instr_op_st_nld ? reg_rs_ql : reg_rs_qr)         :
-	state == S_LS_DATA    ? reg_rd_qr                                         : 1'b0;
+	state == S_PC_NONSEQ0 ? (&bit_ctr ? pc_qr : SPI_INSTR_READ[bit_ctr]) :
+	state == S_PC_NONSEQ1 ? pc_qr && instr_cond_true                     :
+	state == S_LS_ADDR0   ? mem_sdo_ls_addr0                             :
+	state == S_LS_ADDR1   ? ls_addr                                      :
+	state == S_LS_DATA    ? reg_rd_qr                                    : 1'b0;
 
 // ----------------------------------------------------------------------------
 // IO port
@@ -731,7 +735,7 @@ assign ioport_latch_o_next = state == S_FETCH && ~|bit_ctr &&
 
 assign ioport_latch_i_next = exec_io_instr && ~|bit_ctr;
 
-assign ioport_sdo_next = exec_io_instr && reg_rs_ql;
+assign ioport_sdo_next = exec_io_instr && alu_op_t;
 
 assign ioport_sck_en_next  = exec_io_instr && (
 	(bit_ctr >= 4'h6 && bit_ctr < 4'he) ||
@@ -845,9 +849,9 @@ module whisk_shiftreg_leftright #(
 	input  wire clk,
 	input  wire l_nr,
 	input  wire dl,
-	output wire qr,
 	input  wire dr,
-	output wire ql
+	output wire ql,
+	output wire qr
 );
 
 wire [W+1:0] chain_q;
@@ -1002,7 +1006,9 @@ always @ (negedge clk) begin
 	padin_sdi_reg <= padin_sdi;
 end
 
-assign sdi = padin_sdi_reg;
+// FIXME there is something I don't understand here with the CXXRTL delta cycles
+// assign sdi = padin_sdi_reg;
+assign sdi = padin_sdi;
 
 `endif
 

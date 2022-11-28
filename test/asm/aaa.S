@@ -3,5 +3,6 @@
 
 entry:
 	add pc, zero, #4
+	out #0x7357
 	out #0xdead
-	out #0x1234
+	out #0

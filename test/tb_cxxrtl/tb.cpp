@@ -112,6 +112,49 @@ public:
 	}
 };
 
+class IOPort {
+	uint16_t shiftout;
+	uint8_t shiftin;
+	bool prev_sck;
+	bool prev_latch_o;
+	uint16_t out_history[3];
+public:
+	bool exitcode_valid;
+	uint16_t exitcode;
+
+	IOPort() {
+		shiftout = 0;
+		shiftin = 0;
+		prev_sck = false;
+		prev_latch_o = true;
+		for (int i = 0; i < 3; ++i) {
+			out_history[i] = 0;
+		}
+		exitcode_valid = false;
+		exitcode = 0;
+	}
+
+	bool step(bool sck, bool sdi, bool latch_i, bool latch_o) {
+		if (sck && !prev_sck) {
+			shiftout = (shiftout >> 1) | (sdi << 15);
+			shiftin = shiftin >> 1;
+		}
+		if (!latch_o && prev_latch_o) {
+			out_history[2] = out_history[1];
+			out_history[1] = out_history[0];
+			out_history[0] = shiftout;
+			printf("OUT: %04x\n", shiftout);
+			if (out_history[2] == 0x7357 && out_history[1] == 0xdead) {
+				exitcode_valid = true;
+				exitcode = out_history[0];
+			}
+		}
+		prev_sck = sck;
+		prev_latch_o = latch_o;
+		return shiftin & 0x1u;
+	}
+};
+
 // -----------------------------------------------------------------------------
 
 const char *help_str =
@@ -184,6 +227,7 @@ int main(int argc, char **argv) {
 		exit_help("--bin is not optional.\n");
 
 	SPISRAM sram(MEM_SIZE);
+	IOPort io;
 
 	if (load_bin) {
 		std::ifstream fd(bin_path, std::ios::binary | std::ios::ate);
@@ -223,18 +267,26 @@ int main(int argc, char **argv) {
 	top.step(); // workaround for github.com/YosysHQ/yosys/issues/2780
 
 	bool timed_out = false;
-	bool sdi_next = false;
+	bool mem_sdi_next = false;
+	bool ioport_sdi_next = false;
 	for (int64_t cycle = 0; cycle < max_cycles || max_cycles == 0; ++cycle) {
 		top.p_io__clk.set<bool>(false);
 		top.step();
 		top.step(); // workaround for github.com/YosysHQ/yosys/issues/2780
-		top.p_io__mem__sdi.set<bool>(sdi_next);
+		top.p_io__mem__sdi.set<bool>(mem_sdi_next);
+		top.p_io__ioport__sdi.set<bool>(ioport_sdi_next);
 
 		// SDI update is delayed to model scan chain tick on TT2
-		sdi_next = sram.step(
+		mem_sdi_next = sram.step(
 			top.p_io__mem__csn.get<bool>(),
 			top.p_io__mem__sck.get<bool>(),
 			top.p_io__mem__sdo.get<bool>()
+		);
+		ioport_sdi_next = io.step(
+			top.p_io__ioport__sck.get<bool>(),
+			top.p_io__ioport__sdo.get<bool>(),
+			top.p_io__ioport__latch__i.get<bool>(),
+			top.p_io__ioport__latch__o.get<bool>()
 		);
 
 		if (dump_waves) {
@@ -245,12 +297,19 @@ int main(int argc, char **argv) {
 		top.p_io__clk.set<bool>(true);
 		top.step();
 		top.step(); // workaround for github.com/YosysHQ/yosys/issues/2780
-		top.p_io__mem__sdi.set<bool>(sdi_next);
+		top.p_io__mem__sdi.set<bool>(mem_sdi_next);
+		top.p_io__ioport__sdi.set<bool>(ioport_sdi_next);
 
-		sdi_next = sram.step(
+		mem_sdi_next = sram.step(
 			top.p_io__mem__csn.get<bool>(),
 			top.p_io__mem__sck.get<bool>(),
 			top.p_io__mem__sdo.get<bool>()
+		);
+		ioport_sdi_next = io.step(
+			top.p_io__ioport__sck.get<bool>(),
+			top.p_io__ioport__sdo.get<bool>(),
+			top.p_io__ioport__latch__i.get<bool>(),
+			top.p_io__ioport__latch__o.get<bool>()
 		);
 
 		if (dump_waves) {
@@ -260,6 +319,11 @@ int main(int argc, char **argv) {
 			vcd.buffer.clear();
 		}
 
+		if (io.exitcode_valid) {
+			printf("CPU requested halt. Exit code %d\n", io.exitcode);
+			printf("Ran for %ld cycles\n", cycle + 1);
+			break;
+		}
 		if (cycle + 1 == max_cycles) {
 			printf("Max cycles reached\n");
 			timed_out = true;

@@ -1,15 +1,15 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Mon Nov 28 01:25:19 2022
+[*] Mon Nov 28 02:23:53 2022
 [*]
 [dumpfile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/tmp/aaa.vcd"
-[dumpfile_mtime] "Mon Nov 28 01:17:59 2022"
-[dumpfile_size] 891525
+[dumpfile_mtime] "Mon Nov 28 02:23:37 2022"
+[dumpfile_size] 1531702
 [savefile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/aaa.gtkw"
-[timestart] 0
+[timestart] 93
 [size] 3840 2096
 [pos] -1 -1
-*-4.000000 101 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-4.000000 165 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [treeopen] cpu.
 [sst_width] 233
 [signals_width] 263
@@ -41,6 +41,7 @@ cpu.mem_csn_next
 cpu.mem_sck_en_next
 cpu.mem_sdo_next
 cpu.mem_sdi_prev
+cpu.mem_sdo_ls_addr0
 @200
 -
 @22
@@ -58,21 +59,26 @@ cpu.instr_rt[2:0]
 cpu.bit_ctr[3:0]
 @28
 cpu.state[2:0]
-[color] 1
-cpu.alu_result
-@29
-[color] 1
-cpu.pc_dl
+@200
+-
 @28
+[color] 4
+cpu.alu_result
+[color] 4
+cpu.pc_dl
 cpu.pc_dr
 cpu.pc_ql
 cpu.pc_qr
 cpu.pc_l_nr
 @200
 -
+-
 @28
+cpu.alu_op_t
 io_ioport_sdo
 io_ioport_sck
 io_ioport_latch_o
+@200
+-
 [pattern_trace] 1
 [pattern_trace] 0
