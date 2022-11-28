@@ -270,7 +270,7 @@ localparam [2:0] OP2_OUT        = 3'h4;
 // ----------------------------------------------------------------------------
 // Main control state machine
 
-reg [W_INSTR-1:0] instr;
+wire [W_INSTR-1:0] instr;
 
 wire [INSTR_OP_MSB  -INSTR_OP_LSB  :0] instr_op;
 wire [INSTR_COND_MSB-INSTR_COND_LSB:0] instr_cond;
@@ -406,11 +406,16 @@ end
 // ----------------------------------------------------------------------------
 // Instruction shifter and early decode
 
-always @ (posedge clk) begin
-	if (state == S_FETCH) begin
-		instr <= {mem_sdi_prev, instr[15:1]};
-	end
-end
+// Manually instantiate DFFEs, as otherwise we get mux + DFF which is larger
+
+wire shift_instr_reg = state == S_FETCH;
+
+whisk_flop_en instr_flop_u[15:0] (
+	.clk (clk),
+	.d   ({mem_sdi_prev, instr[15:1]}),
+	.e   (shift_instr_reg),
+	.q   (instr)
+);
 
 // Decode condition and imm operand flags as the instruction comes in, so we
 // can use them to steer the state machine at the end of S_FETCH.
@@ -874,7 +879,7 @@ genvar g;
 generate
 for (g = 1; g < W + 1; g = g + 1) begin: shift_stage
 	// Shift-to-left means select the input to your right, and vice versa.
-	whisk_scanflop flop_u (
+	whisk_flop_scanmux flop_u (
 		.clk (clk),
 		.sel (l_nr),
 		.d   ({chain_q[g - 1], chain_q[g + 1]}),
@@ -886,15 +891,15 @@ endgenerate
 endmodule
 
 // ============================================================================
-// Module whisk_scanflop: a flop with a mux on its input. Usually reserved
+// Module whisk_flop_scanmux: a flop with a mux on its input. Usually reserved
 // for DFT scan insertion, but we don't need that where we're going >:)
 // ============================================================================
 
-module whisk_scanflop (
-	input  wire clk,
-	input  wire sel,
+module whisk_flop_scanmux (
+	input  wire       clk,
+	input  wire       sel,
 	input  wire [1:0] d,
-	output reg q
+	output wire       q
 );
 
 `ifdef WHISK_CELLS_SKY130
@@ -905,7 +910,7 @@ module whisk_scanflop (
 // we have a ridiculously long clock period; not sure whether the backend is
 // allowed to change the drive.)
 
-sky130_fd_sc_hd__sdfxtp_1 dff_u (
+sky130_fd_sc_hd__sdfxtp_1 sdff_u (
 	.CLK        (clk),
 	.D          (d[0]),
 	.SCD        (d[1]),
@@ -919,14 +924,56 @@ sky130_fd_sc_hd__sdfxtp_1 dff_u (
 
 // Synthesisable model
 
+reg q_r;
 always @ (posedge clk) begin
-	q <= d[sel];
+	q_r <= d[sel];
 end
+
+assign q = q_r;
 
 `endif
 
 endmodule
 
+// ============================================================================
+// Module whisk_flop_en: a flop with an input enable (DFFE). For some reason
+// these are not mapped automatically, so we get a DFF, a mux and two  buffers
+// ============================================================================
+
+module whisk_flop_en (
+	input  wire clk,
+	input  wire d,
+	input  wire e,
+	output wire q
+);
+
+`ifdef WHISK_CELLS_SKY130
+
+sky130_fd_sc_hd__edfxtp_1 dffe_u (
+	.CLK        (clk),
+	.D          (d),
+	.DE         (e),
+	.Q          (q),
+	.VPWR       (1'b1),
+	.VGND       (1'b0)
+);
+
+`else
+
+// Synthesisable model
+
+reg q_r;
+always @ (posedge clk) begin
+	if (e) begin
+		q_r <= d;
+	end
+end
+
+assign q = q_r;
+
+`endif
+
+endmodule
 // ============================================================================
 // Module whisk_spi_serdes: handle the timing of the SPI interface, and
 // provide a slightly abstracted interface to the whisk core, with all
