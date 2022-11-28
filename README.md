@@ -241,4 +241,8 @@ Alternatively I can look a bit closer at the sampling logic, and try to get the 
 
 # TODO
 
-* Run some placement density sanity tests with a big shift register to see how many flops I can squeeze into the project footprint
+* Write simulator
+* Tests!
+* Check polarity and timing of shift register strobes
+* Fully understand timing of SPI input
+* Add timing mux options to SPI input if things are still not fully clear
