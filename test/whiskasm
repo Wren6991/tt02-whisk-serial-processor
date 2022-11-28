@@ -79,12 +79,12 @@ REGS = {
 COND = {
 	"al": 0x0,
 	"pr": 0x1, # Same as "always", but preserve current flags
-	"cs": 0x2,
-	"cc": 0x3,
-	"zs":  0x4,
-	"zc": 0x5,
-	"ns":  0x6,
-	"nc": 0x7
+	"ns": 0x2,
+	"nc": 0x3,
+	"cs": 0x4,
+	"cc": 0x5,
+	"zs": 0x6,
+	"zc": 0x7,
 }
 
 def next_word(l, i):

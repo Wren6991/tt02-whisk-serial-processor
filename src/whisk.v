@@ -323,12 +323,18 @@ always @ (*) begin
 	case (state)
 		S_FETCH: begin
 			if (!instr_cond_true) begin
-				// Dump it!
-				state_nxt_wrap = S_FETCH;
-			end else if (instr_op_ls && !instr_op_ls_ib) begin
-				// Load/store with no preincrement, go straight to address state
+				if (instr_has_imm_operand) begin
+					// Need to dump 16 more bits, and if we stay in this
+					// state then instr_cond_true will lose its value, so take a detour
+					state_nxt_wrap = S_LS_IMMPD;
+				end else begin
+					state_nxt_wrap = S_FETCH;
+				end
+			end else if (instr[4] && !instr[1]) begin
+				// Load/store with no preincrement, go straight to address
+				// state (note instruction is left-shifted by 1 at this point)
 				state_nxt_wrap = S_LS_ADDR0;
-				bit_ctr_nxt_wrap = instr_op_st_nld ? 4'h8 : 4'h6;
+				bit_ctr_nxt_wrap = instr[3] ? 4'h8 : 4'h6; // FIXME no chip select deassert on store!
 			end else begin
 				state_nxt_wrap = S_EXEC;
 			end
@@ -336,7 +342,7 @@ always @ (*) begin
 		S_EXEC: begin
 			if (instr_op_ls) begin
 				state_nxt_wrap = S_LS_ADDR0;
-				bit_ctr_nxt_wrap = instr_op_st_nld ? 4'h8 : 4'h6;
+				bit_ctr_nxt_wrap = instr[3] ? 4'h8 : 4'h6;
 			end else if (instr_rd == 3'd7) begin
 				state_nxt_wrap = S_PC_NONSEQ0;
 				bit_ctr_nxt_wrap = 4'h6;
@@ -368,8 +374,13 @@ always @ (*) begin
 			bit_ctr_nxt_wrap = 4'h6;
 		end
 		S_LS_IMMPD: begin
-			state_nxt = S_PC_NONSEQ0;
-			bit_ctr_nxt_wrap = 4'h6;
+			if (instr_cond_true) begin
+				state_nxt_wrap = S_PC_NONSEQ0;
+				bit_ctr_nxt_wrap = 4'h6;
+			end else begin
+				// Borrowed to dump the second half of a false-predicate instruction
+				state_nxt_wrap = S_FETCH;
+			end
 		end
 	endcase
 	state_nxt   = &bit_ctr ? state_nxt_wrap   : state;
@@ -475,7 +486,7 @@ wire writeback_wen =
 	state == S_EXEC ||
 	state == S_LS_DATA && !instr_op_st_nld ||
 	state == S_PC_NONSEQ1 && ls_early_postdec ||
-	state == S_LS_IMMPD;
+	state == S_LS_IMMPD && instr_cond_true;
 
 wire writeback_data = state == S_LS_DATA ? mem_sdi_prev : alu_result;
 
@@ -531,10 +542,14 @@ whisk_regfile #(
 // - Stores: Read address MSB-first (shift to left). LSB of address must be
 //   available on final cycle of LS_ADDR1, store data follows immmediately in
 //   LS_DATA. Rotate left for entirety of LS_ADDR1, output is ql.
+//
+// - Need to jiggle the register file during PC_NSEQ0 as this is not 16 cycles
+//   long and we don't want to permanently rotate the register file
 
 wire instr_is_right_shift = instr_op == OP_SHIFT && !instr_rt[2];
 
 assign regfile_shift_l_nr =
+	state == S_PC_NONSEQ0                   ? bit_ctr[0]                          :
 	state == S_EXEC && instr_is_right_shift ? 1'b1                                :
 	state == S_LS_ADDR0 && !instr_op_st_nld ? (&bit_ctr[3:1] ? 1'b1 : bit_ctr[0]) :
 	state == S_LS_ADDR1 && !instr_op_st_nld ? (&bit_ctr[3:1] ? bit_ctr[0] : 1'b1) :
@@ -565,19 +580,19 @@ whisk_shiftreg_leftright #(
 // whether its condition is true:
 //
 // - S_FETCH: +2 (Note: if there is an immediate, and cond is false, we go
-//   through S_FETCH twice to dump the immediate, so +4 total).
+//   through S_LS_IMMPD to dump the immediate, so +4 total).
 //
 // - S_EXEC: +2 if there is an immediate, UNLESS instruction is a load/store
 //   with post-decrement.
 //
 // - S_LS_IMMPD: +2 (only reachable for load/store with immediate
-//   post-decrement). Note: these instructions need special handling because
-//   they fetch the immediate twice, so PC needs to point to the immediate
-//   after S_EXEC.
+//   post-decrement, or for dumping second half of disabled instruction).
+//   Note: these instructions need special handling because they fetch the
+//   immediate twice, so PC needs to point to the immediate after S_EXEC.
 
 wire pc_increment =
 	state == S_FETCH ||
-	state == S_EXEC && !(instr_has_imm_operand && instr_op_ls && instr_op_ls_da) ||
+	state == S_EXEC && instr_has_imm_operand && !(instr_op_ls && instr_op_ls_da) ||
 	state == S_LS_IMMPD;
 
 reg pc_ci;
@@ -816,7 +831,7 @@ for (g = 0; g < N_PADDED; g = g + 1) begin: loop_gprs
 			.l_nr (l_nr),
 			.dl   (dl[g]),
 			.ql   (ql[g]),
-			.ql   (ql[g]),
+			.dr   (dr[g]),
 			.qr   (qr[g])
 		);
 
