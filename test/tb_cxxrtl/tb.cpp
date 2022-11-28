@@ -139,7 +139,7 @@ public:
 			shiftout = (shiftout >> 1) | (sdi << 15);
 			shiftin = shiftin >> 1;
 		}
-		if (!latch_o && prev_latch_o) {
+		if (latch_o && !prev_latch_o) {
 			out_history[2] = out_history[1];
 			out_history[1] = out_history[0];
 			out_history[0] = shiftout;

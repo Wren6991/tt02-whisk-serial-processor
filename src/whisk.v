@@ -198,8 +198,8 @@ whisk_ioport_serdes io_serdes_u (
 
 	.padout_sdo      (io_ioport_sdo),
 	.padout_sck      (io_ioport_sck),
-	.padout_latchn_i (io_ioport_latch_i),
-	.padout_latchn_o (io_ioport_latch_o),
+	.padout_latch_i  (io_ioport_latch_i),
+	.padout_latch_o  (io_ioport_latch_o),
 	.padin_sdi       (io_ioport_sdi)
 );
 
@@ -251,9 +251,10 @@ localparam       INSTR_RD_MSB   = 15;
 // Major opcodes (instr[3:0])
 localparam [3:0] OP_ADD         = 4'h0; // rd = rs + rt
 localparam [3:0] OP_SUB         = 4'h1; // rd = rs - rt
-localparam [3:0] OP_ANDN        = 4'h2; // rd = rs & ~rt
-localparam [3:0] OP_XOR         = 4'h3; // rd = rs ^ rt
-localparam [3:0] OP_SHIFT       = 4'h4; // Minor opcode in rt
+localparam [3:0] OP_AND         = 4'h2; // rd = rs & rt
+localparam [3:0] OP_ANDN        = 4'h3; // rd = rs & ~rt
+localparam [3:0] OP_OR          = 4'h4; // rd = rs | rt
+localparam [3:0] OP_SHIFT       = 4'h5; // Minor opcode in rt
 localparam [3:0] OP_INOUT       = 4'h6; // Minor opcode in rs
 
 localparam [3:0] OP_LDR         = 4'h8; //           rd = mem[rs];
@@ -642,8 +643,8 @@ wire [1:0] alu_sub = alu_op_s + !alu_op_t + (~|bit_ctr ? 1'b1 : alu_ci);
 // produces a shift opposite to the regfile's rotation.
 
 wire [1:0] alu_shift = {
-	instr_is_right_shift ? reg_rs_qr : reg_rs_ql,
-	|bit_ctr ? alu_ci : reg_rs_ql && instr_rt[0]
+	instr_is_right_shift ? reg_rs_ql : reg_rs_qr,
+	|bit_ctr ? alu_ci : reg_rs_qr && instr_rt[0]
 };
 
 wire alu_co;
@@ -654,8 +655,9 @@ assign {alu_co, alu_result} =
 	instr_op_ls && instr_op_ls_ib ? alu_add               :
 	instr_op == OP_ADD            ? alu_add               :
 	instr_op == OP_SUB            ? alu_sub               :
+	instr_op == OP_AND            ? alu_op_s &&  alu_op_t :
 	instr_op == OP_ANDN           ? alu_op_s && !alu_op_t :
-	instr_op == OP_XOR            ? alu_op_s ^ alu_op_t   :
+	instr_op == OP_OR             ? alu_op_s ||  alu_op_t :
 	instr_op == OP_SHIFT          ? alu_shift             :
 	instr_op == OP_INOUT          ? ioport_sdi_prev       : reg_rd_qr;
 
@@ -701,7 +703,7 @@ assign mem_csn_next = bit_ctr == 4'h6 && (
 // access, or when executing an instruction with no immediate.
 assign mem_sck_en_next = !(
 	mem_csn_next ||
-	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && !instr_has_imm_operand
+	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && !instr_has_imm_operand && instr_cond_true
 );
 
 // ldr issues addresses one cycle earlier than str, due to in->out delay.
@@ -730,9 +732,9 @@ assign mem_sdo_next =
 
 // Expected hardware is a 1x 8-bit PISO, and 2x 8-bit SIPO shift registers:
 //
-// - OUT: clock out 16 bits from rt[15:0]/imm[15:0], then a latch_o pulse
+// - OUT: Clock out 16 bits from rt[15:0]/imm[15:0], then pulse latch_o high.
 //
-// - IN: A latch_i pulse, then clock 8 bits into rd[15:8] (MSBs! Sorry!)
+// - IN: Clock 8 bits into rd[15:8], with latch_i high for the first clock.
 //
 // The IN interface is still driven when executing an OUT, with more clocks.
 // Abusable for 6 extra inputs if a second PISO register is chained.
@@ -748,7 +750,7 @@ wire io_instr_out = (instr_rs & (OP2_OUT | OP2_IN)) == OP2_OUT;
 assign ioport_latch_o_next = state == S_FETCH && ~|bit_ctr &&
 	instr_op == OP_INOUT && io_instr_out && instr_cond_true;
 
-assign ioport_latch_i_next = exec_io_instr && ~|bit_ctr;
+assign ioport_latch_i_next = exec_io_instr && bit_ctr == 4'h6;
 
 assign ioport_sdo_next = exec_io_instr && alu_op_t;
 
@@ -1048,8 +1050,8 @@ module whisk_ioport_serdes(
 	// IOs
 	output wire padout_sdo,
 	output wire padout_sck,
-	output wire padout_latchn_i,
-	output wire padout_latchn_o,
+	output wire padout_latch_i,
+	output wire padout_latch_o,
 	input  wire padin_sdi
 );
 
@@ -1065,20 +1067,19 @@ always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		sdo_r <= 1'b0;
 		sck_en_r <= 1'b0;
-		latch_i_r <= 1'b1;
-		latch_o_r <= 1'b1;
+		latch_i_r <= 1'b0;
+		latch_o_r <= 1'b0;
 	end else begin
 		sdo_r <= sdo;
 		sck_en_r <= sck_en;
-		// Active-low on the way out:
-		latch_i_r <= !latch_i;
-		latch_o_r <= !latch_o;
+		latch_i_r <= latch_i;
+		latch_o_r <= latch_o;
 	end
 end
 
 assign padout_sdo = sdo_r;
-assign padout_latchn_i = latch_i_r;
-assign padout_latchn_o = latch_o_r;
+assign padout_latch_i = latch_i_r;
+assign padout_latch_o = latch_o_r;
 
 // TODO clock gating cell?
 assign padout_sck = sck_en_r && !clk;

@@ -1,15 +1,15 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Mon Nov 28 02:23:53 2022
+[*] Mon Nov 28 16:22:46 2022
 [*]
-[dumpfile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/tmp/aaa.vcd"
-[dumpfile_mtime] "Mon Nov 28 02:23:37 2022"
-[dumpfile_size] 1531702
-[savefile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/aaa.gtkw"
-[timestart] 93
-[size] 3840 2096
+[dumpfile] "tmp/lastrun.vcd"
+[dumpfile_mtime] "Mon Nov 28 16:21:46 2022"
+[dumpfile_size] 6637821
+[savefile] "lastrun.gtkw"
+[timestart] 1193
+[size] 1429 2096
 [pos] -1 -1
-*-4.000000 165 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-4.000000 1253 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [treeopen] cpu.
 [sst_width] 233
 [signals_width] 263
@@ -27,15 +27,19 @@ io_mem_sdo
 io_mem_sdi
 @200
 -
+-Control SM
 @22
+[color] 5
 cpu.bit_ctr[3:0]
 @28
+[color] 5
 cpu.state[2:0]
 cpu.state_nxt_wrap[2:0]
 cpu.instr_cond_true
 cpu.instr_has_imm_operand
 @200
 -
+-Memory Interface
 @28
 cpu.mem_csn_next
 cpu.mem_sck_en_next
@@ -44,6 +48,7 @@ cpu.mem_sdi_prev
 cpu.mem_sdo_ls_addr0
 @200
 -
+-Instruction
 @22
 cpu.instr[15:0]
 cpu.instr_op[3:0]
@@ -61,6 +66,10 @@ cpu.bit_ctr[3:0]
 cpu.state[2:0]
 @200
 -
+-Program Counter
+@22
+[color] 5
+cpu.bit_ctr[3:0]
 @28
 [color] 4
 cpu.alu_result
@@ -72,9 +81,47 @@ cpu.pc_qr
 cpu.pc_l_nr
 @200
 -
+-Register File
+@22
+[color] 5
+cpu.bit_ctr[3:0]
+@28
+cpu.regfile_shift_l_nr
+cpu.reg_rd_ql
+cpu.reg_rd_qr
+cpu.reg_rs_ql
+cpu.reg_rs_qr
+cpu.reg_rt_ql
+cpu.reg_rt_qr
+@200
+-
+@22
+[color] 5
+cpu.bit_ctr[3:0]
+@28
+cpu.writeback_data
+cpu.writeback_reg[2:0]
+cpu.writeback_wen
+@200
+-
+-ALU + Flags
+@28
+cpu.alu_op_s
+cpu.alu_op_t
+cpu.alu_result
+cpu.alu_co
+@29
+cpu.alu_shift[1:0]
+@200
 -
 @28
-cpu.alu_op_t
+cpu.flag_c
+cpu.flag_n
+cpu.flag_z
+@200
+-
+-IO Port
+@28
 io_ioport_sdo
 io_ioport_sck
 io_ioport_latch_o

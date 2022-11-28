@@ -74,6 +74,42 @@ Caveat to all of this is that I need to examine the cell library and see if the 
 
 Another ugly thing I noticed when I started actually writing the logic was that when we have a post-decrement with an immediate operand, we need to read the immedate operand in for the post-decrement, as well as potentially reading it in for the pre-increment. This means restarting our sequential fetch one unit earlier, which is fine unless the instruction is a load into PC, in which case the re-fetched immediate will actually be the loaded PC value!
 
+(TODO: we could instead use a 3-bit signed-left-shift-1 immediate in the condition code slot, which would avoid the complication with popping into PC, and would avoid the 16-cycle penalty for immediate post-decrement. This might also allow the read mux on `rd` to be eliminated. Stack operations are common when registers are few, so might be a good tradeoff?)
+
+### Byte Accesses
+
+We only have halfword (16-bit, register-sized) accesses, but these can be byte-aligned.
+
+A byte load is:
+
+```
+	ldr rdata, raddr
+	and rdata, rdata, #0xff
+```
+
+(80 + 32 cycles, 6 bytes of code)
+
+A byte store is:
+
+```
+	ldr rscratch, raddr
+	and rscratch, rscratch, #0xff00
+	or  rdata, rdata, rscratch
+	str rdata, raddr
+```
+
+(80 + 32 + 32 + 80 cycles, 10 bytes of code)
+
+This doesn't seem too unreasonable, but adding support for byte accesses would be fairly inexpensive:
+
+* Byte loads would still load the full 16 bits, but mask or sign-extend into bits 15:8 of the result
+* Byte stores would still shift out the full 16 bits, but would gate the SPI clock for the last 8 cycles
+
+One suitable encoding hole for byte load/stores is the `rt` register specifier for non-incrementing non-decrementing loads, which don't use this operand. Push/pops are mostly going to be register values, so just having register-addressed byte loads/stores is probably acceptable.
+
+Since byte accesses can easily be emulated with the existing instructions, this feels like future work.
+
+
 ## Instructions
 
 Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode. The opcode will be the LSBs, so we have a chance to get a head start on the decode if it's profitable.
@@ -82,8 +118,9 @@ Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode.
 
 * ADD  `rd = rs + rt`
 * SUB  `rd = rs - rt`
+* AND  `rd = rs & rt`
 * ANDN `rd = rs & ~rt`
-* XOR  `rd = rs ^ rt` (performs NOT if immediate is all-ones)
+* OR   `rd = rs | rt`
 * Shift (minor opcode in `rt`)
 	* SRL `rd = rs >> 1`
 	* SRA `rd = $signed(rs) >>> 1`
@@ -94,11 +131,11 @@ Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode.
 * LDR  `rs ?= rs + rt; rd = [rs]; rs ?= rs - rt` (4 variants)
 * STR  `rs ?= rs + rt; [rs] = rd; rs ?= rs - rt` (4 variants)
 
-No AND/OR. (I might regret this!) A lot of ANDs have constant masks, in which case the inversion doesn't matter.
+No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber, and the use of XOR + imm to do NOT can be performed better by ANDN and a zero register.
 
 No multi-bit shift. Due to the lack of shift enable on the register file, this would take 32 cycles: 16 to get shift amount to nearest multiple of 2 by dithering the left/right shift signal, then next 16 to shift by 1 by shifting through the ALU carry flop. Don't feel this is worth the control complexity, and we can save opcode space by putting the shifts on a minor opcode.
 
-We have 14 instructions in the instruction bits 3:0, counting the 4 variants each of LDR/STR. 1/8th of the encoding space is reserved for Tiny Tapeout 3.
+We have 15 instructions in the instruction bits 3:0, counting the 4 variants each of LDR/STR. 1/16th of the major opcode space is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift and In/out.
 
 ### Flags
 
@@ -108,12 +145,12 @@ three flags: N Z C (Negative, Zero, Carry). The carry is a true carry flag
 
 * `000: al`: Always execute, and write flags (the default)
 * `001: pr`: Always execute, but preserve flags
-* `010: n `: Execute if negative
-* `011: nn`: Execute if not negative
-* `100: c `: Execute if carry
-* `101: nc`: Execute if no carry
-* `110: z `: Execute if zero
-* `111: nz`: Execute if nonzero
+* `010: ns`: Execute if negative
+* `011: nc`: Execute if not negative
+* `100: cs`: Execute if carry
+* `101: cc`: Execute if no carry
+* `110: zs`: Execute if zero
+* `111: zc`: Execute if nonzero
 
 (TODO: there are probably more useful combinations here, for signed comparisons etc, and not clear we can get away without a V flag. We can use double branches to test combinations, but equally we could use branch-over-jump to invert flags.)
 
@@ -128,10 +165,12 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 ### Pseudo-ops
 
 ```
-mov rd, rs    -> add rd, zero, rs
-not rd, rs    -> andn rd, zero, rs
-cmp rs, rt    -> sub zero, rs, rt
+mov rd, rs    -> add rd, zero, rs   // Or rs can be #imm
 ldi rd, #imm  -> add rd, zero, #imm
+not rd, rs    -> andn rd, zero, rs
+cmp rs, rt    -> sub zero, rs, rt   // Compare integers
+tst rs, rt    -> and zero, rs, rt   // Test masked bits set
+tstn rs, rt   -> andn zero, rs, rt  // Test unmasked bits set
 j label       -> add pc, pc, @label // Assembler calculates immediate offset to label
 lda rd, label -> add rd, pc, @label // Assembler calculates immediate offset to label
 push rd       -> strib rd, sp, -2   // Store with negative increment-before

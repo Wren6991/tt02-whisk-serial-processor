@@ -6,9 +6,10 @@ import sys
 
 OPC_ADD                = 0x0
 OPC_SUB                = 0x1
-OPC_ANDN               = 0x2
-OPC_XOR                = 0x3
-OPC_SHIFT              = 0x4
+OPC_AND                = 0x2
+OPC_ANDN               = 0x3
+OPC_OR                 = 0x4
+OPC_SHIFT              = 0x5
 OPC_INOUT              = 0x6
 OPC_LDR                = 0x8
 OPC_LDR_PREINC         = 0x9
@@ -37,8 +38,9 @@ INSTR = {
 	# Two-operand instructions
 	"add":    (OPC_ADD,                                                      True,  True,  True ),
 	"sub":    (OPC_SUB,                                                      True,  True,  True ),
+	"and":    (OPC_AND,                                                      True,  True,  True ),
 	"andn":   (OPC_ANDN,                                                     True,  True,  True ),
-	"xor":    (OPC_XOR,                                                      True,  True,  True ),
+	"or":     (OPC_OR,                                                       True,  True,  True ),
 	"ldib":   (OPC_LDR_PREINC,                                               True,  True,  True ),
 	"ldda":   (OPC_LDR_POSTDEC,                                              True,  True,  True ),
 	"ldibda": (OPC_LDR_PREINC_POSTDEC,                                       True,  True,  True ),
@@ -61,6 +63,8 @@ INSTR = {
 	"mov":    (OPC_ADD  | (6 << INSTR_RS_LSB),                               True,  False, True ),
 	"not":    (OPC_ANDN | (6 << INSTR_RS_LSB),                               True,  False, True ),
 	"cmp":    (OPC_SUB  | (6 << INSTR_RD_LSB),                               False, True,  True ),
+	"tst":    (OPC_AND  | (6 << INSTR_RD_LSB),                               False, True,  True ),
+	"tstn":   (OPC_ANDN | (6 << INSTR_RD_LSB),                               False, True,  True ),
 }
 
 REGS = {
@@ -175,7 +179,7 @@ def assemble(lines):
 				opc |= 6 << INSTR_RT_LSB
 				imm_operand = get_immediate(l_full, l[i])
 			else:
-				if l[i] not in REGS:
+				if l[i] not in REGS or l[i] == "zero":
 					raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
 				opc |= REGS[l[i]] << INSTR_RT_LSB
 

@@ -2,7 +2,8 @@ TEST ?= aaa
 TBDIR := ../tb_cxxrtl
 
 run: tmp/$(TEST).bin $(TBDIR)/tb
-	$(TBDIR)/tb --cycles 10000 --bin tmp/$(TEST).bin --vcd tmp/$(TEST).vcd
+	$(TBDIR)/tb --cycles 100000 --bin tmp/$(TEST).bin --vcd tmp/$(TEST).vcd
+	ln -sf $(TEST).vcd tmp/lastrun.vcd
 
 view: run
 	gtkwave tmp/$(TEST).vcd &
