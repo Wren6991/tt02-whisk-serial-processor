@@ -37,37 +37,40 @@
 // ============================================================================
 
 module wren6991_whisk_tt2_io_wrapper (
-	input  wire [7:0] io_i,
-	output wire [7:0] io_o
+	input  wire [7:0] io_in,
+	output wire [7:0] io_out
 );
 
 // Global signals
-wire io_clk = io_i[0];
-wire io_rst_n = io_i[1];
+wire io_clk = io_in[0];
+wire io_rst_n = io_in[1];
 
 // SPI memory interface
-wire io_mem_sdi = io_i[2];
+wire io_mem_sdi = io_in[2];
 
 wire io_mem_csn;
 wire io_mem_sck;
 wire io_mem_sdo;
 
-assign io_o[0] = io_mem_csn;
-assign io_o[1] = io_mem_sck;
-assign io_o[2] = io_mem_sdo;
+assign io_out[0] = io_mem_csn;
+assign io_out[1] = io_mem_sck;
+assign io_out[2] = io_mem_sdo;
 
 // IO port (shift register interface)
-wire io_ioport_sdi = io_i[3];
+wire io_ioport_sdi = io_in[3];
 
 wire io_ioport_sck;
 wire io_ioport_sdo;
 wire io_ioport_latch_i;
 wire io_ioport_latch_o;
 
-assign io_o[3] = io_ioport_sck;
-assign io_o[4] = io_ioport_sdo;
-assign io_o[5] = io_ioport_latch_i;
-assign io_o[6] = io_ioport_latch_o;
+assign io_out[3] = io_ioport_sck;
+assign io_out[4] = io_ioport_sdo;
+assign io_out[5] = io_ioport_latch_i;
+assign io_out[6] = io_ioport_latch_o;
+
+// Be a good neighbour
+assign io_out[7] = 1'b0;
 
 whisk_top top_u (
 	.io_clk            (io_clk),
