@@ -32,11 +32,11 @@
 `endif
 
 // ============================================================================
-// Module whisk_tt2_io_wrapper: Top level for TT2 synthesis. instantiate
-// whisk_top, and map named ports to numbered TT2 input/output ports.
+// Module wren6991_whisk_tt2_io_wrapper: Top level for TT2 synthesis.
+// instantiate whisk_top, and map named ports to numbered TT2 inputs/outputs
 // ============================================================================
 
-module whisk_tt2_io_wrapper (
+module wren6991_whisk_tt2_io_wrapper (
 	input  wire [7:0] io_i,
 	output wire [7:0] io_o
 );
@@ -997,12 +997,7 @@ assign padout_sck = sck_en_r && !clk;
 
 // TODO find a suitable latch cell (possibly sky130_fd_sc_hd__dlxtp)
 
-wire padin_sdi_delay;
-
-delay_buf_dummy_find_a_cell (
-	.i (padin_sdi),
-	.z (padin_sdi_delay)
-);
+wire padin_sdi_delay = padin_sdi;
 
 reg sdi_latch;
 
@@ -1100,12 +1095,7 @@ assign padout_sck = sck_en_r && !clk;
 
 // TODO find a suitable latch cell (possibly sky130_fd_sc_hd__dlxtp)
 
-wire padin_sdi_delay;
-
-delay_buf_dummy_find_a_cell (
-	.i (padin_sdi),
-	.z (padin_sdi_delay)
-);
+wire padin_sdi_delay = padin_sdi;
 
 reg sdi_latch;
 
