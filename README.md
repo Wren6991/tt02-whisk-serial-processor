@@ -44,7 +44,7 @@ Aspirationally: 6x 16-bit registers, r0..r5 (approx 100 bits). Ideally these wil
 
 Instructions are three-address-code, because we can afford the encoding space, and we are relatively register-poor so would like to avoid unnecessary clobbering. PC is available as register index 7, for reads/writes by any instruction.
 
-Register index 6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination is useful for generIt functions differently for the second operand: index 6 indicates a 16-bit literal following the instruction. (Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.)
+Register index 6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination is useful for generating flags, and there are some useful pseudo-ops with zero for the first operand. It functions differently for the second operand: index 6 indicates a 16-bit literal following the instruction. (Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.)
 
 ## Memory Accesses
 
@@ -65,6 +65,7 @@ A benefit of the built-in add is that by suppressing the fixup subtract, we get 
 So proposing:
 
 LDR: `rs ?= rs + rt; rd = [rs]; rs ?= rs - rt` (where `?=` is an optional assignment)
+
 STR: `rs ?= rs + rt; [rs] = rd; rs ?= rs - rt`
 
 Execution time: 96 cycles or 80 cycles depending on whether the first add takes place. Note STR is using `rd` as an input operand, which is irregular, but since we're bit-serial the extra mux is cheap. We already have the ability to shift `rd`.
@@ -92,8 +93,6 @@ Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode.
 	* IN `rd = inport`
 * LDR  `rs ?= rs + rt; rd = [rs]; rs ?= rs - rt` (4 variants)
 * STR  `rs ?= rs + rt; [rs] = rd; rs ?= rs - rt` (4 variants)
-
-Note for shifts we might forbid rd == rs, or forbid rd != rs, to avoid a special case. (Not sure which is more useless!)
 
 No AND/OR. (I might regret this!) A lot of ANDs have constant masks, in which case the inversion doesn't matter.
 
