@@ -114,22 +114,10 @@ module whisk_top (
 // ----------------------------------------------------------------------------
 // Clock/reset wrangling
 
-// Buffer the clock input (Maybe remove this, was sort of hoping I could time
-// from this named cell but looks like we can't add our own constraints?)
-wire clk;
+// Don't buffer the clock -- seems like the scripts define a clock on io_in[0]?
+wire clk = io_clk;
 
-`ifdef WHISK_CELLS_SKY130
-sky130_fd_sc_hd__clkbuf_2 clkroot_clk_u (
-    .A          (io_clk),
-    .X          (clk),
-    .VPWR       (1'b1),
-    .VGND       (1'b0)
-);
-`else
-assign clk = io_clk;
-`endif
-
-// Synchronise reset removal to buffered clock
+// Synchronise reset removal to clk
 reg [1:0] reset_sync;
 wire rst_n = reset_sync[1];
 
