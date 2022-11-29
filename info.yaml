@@ -25,7 +25,7 @@ documentation:
     of memory can be addressed.
 
     Internally, Whisk is fully serial: registers and the program counter are
-    read and written one bit at a time. This is matches the throughput of the
+    read and written one bit at a time. This matches the throughput of the
     SPI memory interface, and leaves more area free for having more/larger
     general purpose registers as well as leaving room for expansion on future
     Tiny Tapeouts.
