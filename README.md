@@ -36,7 +36,7 @@ GPR cycling will be LSB-first, to propagate carries, so this implies the layout 
 
 With a view to supporting larger programs or even simple operating systems in the future, we try to avoid any size or performance penalties for position-independent code. Loads and stores can be PC-relative with a full signed 16-bit displacement, and jumps and branches also have a full 16-bit offset from PC. We also try to make sure common stack idioms, like popping into PC to return from a function, map to single instructions if it does not compromise the performance or the control complexity.
 
-(*Commentary on how I arrived at a decision, including failed design experiments, will be formatted like this paragraph, to keep it mostly separate from the factual description.*)
+> Commentary on how I arrived at a decision, including failed design experiments, will be formatted like this paragraph, to keep it mostly separate from the factual description.
 
 ## Registers
 
@@ -48,11 +48,13 @@ Non-architectural registers should be kept to a minimum: we probably do need a c
 
 Instructions are three-address-code, because we can afford the encoding space, and we are relatively register-poor so would like to avoid unnecessary clobbering. PC is available as register index 7, for reads/writes by any instruction.
 
-Register index r6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination allows flags to be set without clobbering any registers, and there are some useful pseudo-ops with zero for the first operand. For the *second* operand, index r6 indicates a 16-bit literal following the instruction. (*Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.*)
+Register index r6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination allows flags to be set without clobbering any registers, and there are some useful pseudo-ops with zero for the first operand. For the *second* operand, index r6 indicates a 16-bit literal following the instruction.
+
+> Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.
 
 ## Instructions
 
-Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode. The opcode will be the LSBs, so we have a chance to get a head start on the decode if it's profitable.
+Each instruction has 9 bits for reg specifiers (MSBs), and the 7 for the opcode.
 
 The format of an instruction is:
 
@@ -60,29 +62,35 @@ The format of an instruction is:
 |15 13|12 10|9   7|6         4|3            0|
 | rd  | rs  | rt  | condition | major opcode |
 ```
-Of the 16 major opcodes, 15 are currently allocated:
 
+> The major opcode is the LSBs, so we have a chance to get a head start on the decode
+
+> rt can't be on the far left because the processor needs to decode it before the instruction is completely fetched, to decide whether to issue more clocks for the immediate
+
+Of the 16 major opcodes, 15 are currently allocated:
 
 * 0x0: ADD  `rd = rs + rt`
 * 0x1: SUB  `rd = rs - rt`
 * 0x2: AND  `rd = rs & rt`
-* 0x3: ANDN `rd = rs & ~rt`
+* 0x3: ANDN `rd = ~rs & rt`
 * 0x4: OR   `rd = rs | rt`
 * 0x5: Shift (minor opcode in `rt`)
-	* SRL `rd = rs >> 1`
-	* SRA `rd = $signed(rs) >>> 1`
-	* SLL `rd = rs << 1`
+	* 0x0: SRL `rd = rs >> 1`
+	* 0x1: SRA `rd = $signed(rs) >>> 1`
+	* 0x4: SLL `rd = rs << 1`
 * 0x6: In/out (minor opcode in `rt`):
-	* OUT `outport = rs`
-	* IN `rd = inport`
+	* 0x0: IN `rd = inport`
+	* 0x4: OUT `outport = rs`
 * 0x8 through 0xb: LD (4 variants, see "Memory Accesses")
 * 0xc through 0xf: ST (4 variants, see "Memory Accesses")
 
-(*No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber, and the use of XOR + imm to do NOT can be performed better by ANDN and a zero register.*)
+> *No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber. The use of XOR + imm to do NOT also works with ANDN. Since ANDN inverts its first operand, inverted registers can be ANDed with immediates; note there is no use in inverting immediates.*
 
-(*No multi-bit shift. Efficient multi-bit shifts require control of the shifting of the register file. Even if the register file shift direction is controllable, this would take 32 cycles: 16 to get shift amount to nearest multiple of 2 by dithering the left/right shift signal, then next 16 to shift by 1 by shifting through the ALU carry flop. Don't feel this is worth the control complexity, and we can save opcode space by putting the shifts on a minor opcode.*)
+> *No multi-bit shift. Efficient multi-bit shifts require control of the shifting of the register file. Even if the register file shift direction is controllable, this would take 32 cycles: 16 to get shift amount to nearest multiple of 2 by dithering the left/right shift signal, then next 16 to shift by 1 by shifting through the ALU carry flop. Don't feel this is worth the control complexity, and we can save opcode space by putting the shifts on a minor opcode.*
 
-(*One of the 16 major opcodes space is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift and In/out.*)
+> *One of the 16 major opcodes is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift and In/out.*
+
+Condition codes can be applied to any instruction, and may be true or false depending on the Z/C/V flag values at that point in the program (see "Flags"). Instructions with false condition codes have no side effects other than incrementing the program counter. Instructions with true condition codes execute the same as unconditional instructions, except that they do not update the flags.
 
 ### Jumps and Branches
 
@@ -94,10 +102,9 @@ Any instruction that writes to PC is effectively a jump instruction. After writi
 * Cycles 48 through 62: The address register shifts in reverse. Because the first PC bit already went to the bus last cycle, the *second flop* of the address register is forwarded to the bus. The last address bit is issued on cycle 62.
 * Cycle 63: idle cycle to account for round trip time of SPI signals
 
-(*The oddity of issuing the first address bit one cycle early, and then having to tap the second flop of the address register, is because the address register also needs to issue write addresses, which have different timing, because the write address directly abuts the write data on the SPI bus. This, plus the inflexibility of our 16-cycle register rotation, causes read addresses to have slightly odd timing.*)
+> The oddity of issuing the first address bit one cycle early, and then having to tap the second flop of the address register, is because the address register also needs to issue write addresses, which have different timing, because the write address directly abuts the write data on the SPI bus. This, plus the inflexibility of our 16-cycle register rotation, causes read addresses to have slightly odd timing.
 
-
-(*There are a few wasted cycles between cycle 32 and 47, and this is again due to our fixed 16-cycle rotation of the GPRs and PC.*)
+> There are a few wasted cycles between cycle 32 and 47, and this is again due to our fixed 16-cycle rotation of the GPRs and PC.
 
 A branch is any jump instruction with a condition code other than `al` or `pr`. If the condition is true, it will execute as a jump instruction, and if the condition is false, the instruction is skipped.
 
@@ -126,13 +133,26 @@ If a condition code is false, an instruction has no effect other than incrementi
 
 There is no branch instruction -- just do a conditional ADD on PC. Likewise there is no subroutine call -- just write PC + 4 to a register before jumping in.
 
+#### Flag Results of Instructions
+
+`Z` is always the NOR reduction of all bits of the result (or, for loads/stores, all bits of the data transferred to/from memory).
+
+`N` is always the MSB of the result (or, for loads/stores, the MSB of the data transferred to/from memory).
+
+`C` differs with the instruction:
+
+* ADD/SUB carry into `C` from the sum (*not* a borrow)
+* AND/ANDN/OR set `C` if and only if the result is all-ones
+* SLL/SRL/SRA set `C` to the bit shifted out of the register
+* Loads/stores carry into `C` from the sum of the two address operands, *even if the sum is not used for the actual load/store address*
+
 ### Memory Accesses
 
-Load/store instruction move data between memory and the register file. This is unavoidably a nonsequential SRAM access, and is followed by a nonsequential instruction fetch, so the best possible 16-bit load costs 16 + 1 + 24 + 1 + 16 + 24 + 1 = 84 cycles. (Fetch, pulse chip select high, load cmd + addr, sampling delay, load data, pulse chip select high, fetch cmd + addr, sampling delay.)
+Load/store instructions move data between memory and the register file. This is a nonsequential SRAM access, followed by a nonsequential instruction fetch, so the best possible 16-bit load costs 16 + 1 + 24 + 1 + 16 + 24 + 1 = 84 cycles. (Fetch, pulse chip select high, load cmd + addr, sampling delay, load data, pulse chip select high, fetch cmd + addr, sampling delay.)
 
 Addresses are issued to the SPI SRAM in MSB-first order, but we generally read the register file LSB-first so that we can propagate carries serially. If nonsequential accesses were fast, we could just accept a scramble of the address bits, but we are leaning heavily on fast sequential SPI transfers, so our addresses need to be genuinely sequential. We solve this with a dedicated address register, capable of shifting in both directions. First a register is read from the register file into the address register, optionally adding another register or an immediate as the data passes through the ALU. The address register captures this and then replays it in reverse.
 
-(*Earlier versions of the design were instead able to reverse the shift direction of the register file and program counter. The lack of dedicated address register meant address addition had to be performed in-place in the source register, then reverted by subtraction. It was impossible to reload the immediate for subtraction if PC was used as the base address, or if the load was into PC. Replacing the scan flops in PC/GPRs with simple DFFs just about pays for the cost of a dedicated address register.*)
+> Earlier versions of the design were instead able to reverse the shift direction of the register file and program counter. The lack of dedicated address register meant address addition had to be performed in-place in the source register, then reverted by subtraction. It was impossible to reload the immediate for subtraction if PC was used as the base address, or if the load was into PC. Replacing the scan flops in PC/GPRs with simple DFFs just about pays for the cost of a dedicated address register.
 
 The address register captures either the sum of the two operands, or just the first operand. There is also an option to write back the sum to the first operand register. This supports the following four cases:
 
@@ -199,7 +219,8 @@ nop           -> add.pr zero, zero, r0 // Doesn't write flags either
 * Condition code false (skipped instruction), immediate operand: 32 cycles
 * ADD, SUB, AND, ANDN, OR, SRL, SRA, SLL, IN, OUT, rd is not PC: 32 cycles
 * ADD, SUB, AND, ANDN, OR, SRL, SRA, SLL, IN, OUT, rd is PC: 64 cycles
-* Load/store: 96 cycles always
+* Load/store with no immediate operand: 96 cycles
+* Load/store with an immediate operand: 112 cycles
 
 ## Notes on SPI vs scan timings
 

@@ -57,13 +57,14 @@ mul:
 	out #0xaaaa
 	out r0
 	out r1
+
 	mov r2, #1 // Walking bit mask
 	mov r3, #0 // Accumulator
 	add pc, pc, @mul_test
 mul_loop:
 	tst r1, r2
 	add.zc r3, r3, r0
-	andn r1, r1, r2
+	andn r1, r2, r1
 	sll r2, r2
 	sll r0, r0
 mul_test:

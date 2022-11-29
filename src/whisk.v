@@ -240,11 +240,11 @@ localparam       INSTR_RD_LSB   = 13;
 localparam       INSTR_RD_MSB   = 15;
 
 // Major opcodes (instr[3:0])
-localparam [3:0] OP_ADD         = 4'h0; // rd = rs + rt
-localparam [3:0] OP_SUB         = 4'h1; // rd = rs - rt
-localparam [3:0] OP_AND         = 4'h2; // rd = rs & rt
-localparam [3:0] OP_ANDN        = 4'h3; // rd = rs & ~rt
-localparam [3:0] OP_OR          = 4'h4; // rd = rs | rt
+localparam [3:0] OP_ADD         = 4'h0; // rd =  rs + rt
+localparam [3:0] OP_SUB         = 4'h1; // rd =  rs - rt
+localparam [3:0] OP_AND         = 4'h2; // rd =  rs & rt
+localparam [3:0] OP_ANDN        = 4'h3; // rd = ~rs & rt
+localparam [3:0] OP_OR          = 4'h4; // rd =  rs | rt
 localparam [3:0] OP_SHIFT       = 4'h5; // Minor opcode in rt
 localparam [3:0] OP_INOUT       = 4'h6; // Minor opcode in rs
 
@@ -547,17 +547,20 @@ wire [1:0] alu_shift_r = {
 	&bit_ctr ? alu_op_s && instr_rt[0] : alu_op_s_next
 };
 
+// Carry is an all-ones flag for bitwise ops
+wire bit_co = alu_result && (alu_ci || ~|bit_ctr);
+
 wire alu_co;
 assign {alu_co, alu_result} =
-	instr_op_ls                          ? alu_add               :
-	instr_op == OP_ADD                   ? alu_add               :
-	instr_op == OP_SUB                   ? alu_sub               :
-	instr_op == OP_AND                   ? alu_op_s &&  alu_op_t :
-	instr_op == OP_ANDN                  ? alu_op_s && !alu_op_t :
-	instr_op == OP_OR                    ? alu_op_s ||  alu_op_t :
-	instr_op == OP_SHIFT &&  instr_rt[2] ? alu_shift_l           :
-	instr_op == OP_SHIFT && !instr_rt[2] ? alu_shift_r           :
-	instr_op == OP_INOUT                 ? ioport_sdi_prev       : alu_add;
+	instr_op_ls                          ? alu_add                         :
+	instr_op == OP_ADD                   ? alu_add                         :
+	instr_op == OP_SUB                   ? alu_sub                         :
+	instr_op == OP_AND                   ? {bit_co,  alu_op_s && alu_op_t} :
+	instr_op == OP_ANDN                  ? {bit_co, !alu_op_s && alu_op_t} :
+	instr_op == OP_OR                    ? {bit_co,  alu_op_s || alu_op_t} :
+	instr_op == OP_SHIFT &&  instr_rt[2] ? alu_shift_l                     :
+	instr_op == OP_SHIFT && !instr_rt[2] ? alu_shift_r                     :
+	instr_op == OP_INOUT                 ? ioport_sdi_prev                 : alu_add;
 
 always @ (posedge clk) begin
 	alu_ci <= alu_co;
@@ -570,13 +573,15 @@ reg flag_z;
 reg flag_c;
 reg flag_n;
 
-wire update_flags = (state == S_EXEC || state == S_LS_DATA) && ~|instr_cond;
+wire update_flag_zn = (state == S_EXEC || state == S_LS_DATA) && ~|instr_cond;
+wire update_flag_c = update_flag_zn && state == S_EXEC;
 
-// TODO sensible flags for load/store
 always @ (posedge clk) begin
-	if (update_flags) begin
+	if (update_flag_zn) begin
 		flag_z <= (flag_z || ~|bit_ctr) && !alu_result;
 		flag_n <= alu_result;
+	end
+	if (update_flag_c) begin
 		flag_c <= alu_co;
 	end
 end
