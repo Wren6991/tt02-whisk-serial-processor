@@ -301,9 +301,9 @@ localparam [2:0] S_EXEC       = 3'd1; // Loop all GPRs, write one GPR
 localparam [2:0] S_PC_NONSEQ0 = 3'd2; // Issue cmd, then issue 1 PC bit
 localparam [2:0] S_PC_NONSEQ1 = 3'd3; // Issue rest of PC, then 1 cyc delay
 localparam [2:0] S_LS_ADDR0   = 3'd4; // Deferred LS SPI cmd following immediate
-localparam [2:0] S_LS_ADDR1   = 3'd4; // Issue addr then, if load, 1 cyc delay
-localparam [2:0] S_LS_DATA    = 3'd5; // Issue store data, or sample load data
-localparam [2:0] S_SKIP_IMM   = 3'd6; // Skip immediate following false condition
+localparam [2:0] S_LS_ADDR1   = 3'd5; // Issue addr then, if load, 1 cyc delay
+localparam [2:0] S_LS_DATA    = 3'd6; // Issue store data, or sample load data
+localparam [2:0] S_SKIP_IMM   = 3'd7; // Skip immediate following false condition
 
 reg [2:0] state_nxt_wrap;
 reg [2:0] state_nxt;
@@ -620,13 +620,18 @@ whisk_shiftreg_leftright #(
 	.q_all (ar_q_all)
 );
 
-// Shift left when replaying addresses.
-assign ar_l_nr = state == S_LS_ADDR1 ||	state == S_PC_NONSEQ1;
+// Shift left when replaying addresses. Also shift left in LS_ADDR0 to
+// recirculate the address generated during EXEC for use in LS_ADDR1.
+assign ar_l_nr =
+	state == S_LS_ADDR1 ||
+	state == S_PC_NONSEQ1 ||
+	state == S_LS_ADDR0;
+
+assign ar_dr = ar_ql;
 
 assign ar_dl =
 	state == S_PC_NONSEQ0 ? pc_qr   :
 	instr_op_ls_suma      ? alu_add : reg_rs_qr;
-
 // ----------------------------------------------------------------------------
 // SPI controls
 
@@ -635,7 +640,7 @@ assign ar_dl =
 // Note LS_ADDR0 state is skipped if we are able to issue from EXEC:
 wire issue_ls_addr_ph0 =
 	state == S_LS_ADDR0 ||
-	state == S_EXEC && instr_op_ls && !instr_has_imm_operand;
+	state == S_EXEC && instr_op_ls && !instr_has_imm_operand && instr_cond_true;
 
 wire [3:0] spi_cmd_start_cycle =
 	state == S_PC_NONSEQ0 ? 4'h7 :
@@ -646,22 +651,28 @@ assign mem_csn_next = bit_ctr < spi_cmd_start_cycle && (
 );
 
 // Pedal to the metal on SCK except when pulling CSn for a nonsequential
-// access, or when executing an unskipped instruction with no immediate.
+// access, or when executing an unskipped instruction without immediate or
+// early address issue.
 
-assign mem_sck_en_next = !(
-	mem_csn_next ||
-	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && !instr_has_imm_operand && instr_cond_true
+assign mem_sck_en_next = !mem_csn_next && !(
+	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && instr_cond_true &&
+	!(instr_has_imm_operand || issue_ls_addr_ph0)
 );
 
 // Store address replays entirely in LS_ADDR1, but load/fetch extend one cycle
 // into previous state, so carefully pick what delay to observe the address
 // with. (Also mask address to zero for very first fetch at start of day.)
+//
+// Note in LS_ADDR0 that we are actually recirculating an address generated in
+// EXEC, because the address issue was deferred due to an immediate read, so
+// this case looks like load-LS_ADDR1 rather than like load-EXEC.
 
 wire mem_spi_addr =
 	!instr_cond_true                        ? 1'b0       :
 	state == S_PC_NONSEQ1                   ? ar_ql_next :
 	state == S_LS_ADDR1 &&  instr_op_st_nld ? ar_ql      :
-	state == S_LS_ADDR1 && !instr_op_st_nld ? ar_ql_next : ar_dl;
+	state == S_LS_ADDR1 && !instr_op_st_nld ? ar_ql_next :
+	state == S_LS_ADDR0                     ? ar_ql_next : ar_dl;
 
 // Note: SPI commands are MSB-first (the commands here are 03h and 02h).
 localparam [15:0] SPI_INSTR_READ  = 16'hc000 >> 1;

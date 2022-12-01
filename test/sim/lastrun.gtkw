@@ -1,16 +1,19 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Mon Nov 28 16:22:46 2022
+[*] Thu Dec  1 02:20:04 2022
 [*]
-[dumpfile] "tmp/lastrun.vcd"
-[dumpfile_mtime] "Mon Nov 28 16:21:46 2022"
-[dumpfile_size] 6637821
-[savefile] "lastrun.gtkw"
-[timestart] 1193
-[size] 1429 2096
+[dumpfile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/tmp/ld_basic.vcd"
+[dumpfile_mtime] "Thu Dec  1 02:19:57 2022"
+[dumpfile_size] 114149841
+[savefile] "/home/luke/proj/tt02-whisk-serial-processor/test/sim/lastrun.gtkw"
+[timestart] 1044
+[size] 1545 2096
 [pos] -1 -1
-*-4.000000 1253 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-5.853779 1154 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [treeopen] cpu.
+[treeopen] cpu.regfile_u.
+[treeopen] cpu.regfile_u.loop_gprs[4].
+[treeopen] cpu.regfile_u.loop_gprs[4].gpr_shifter.
 [sst_width] 233
 [signals_width] 263
 [sst_expanded] 1
@@ -45,7 +48,6 @@ cpu.mem_csn_next
 cpu.mem_sck_en_next
 cpu.mem_sdo_next
 cpu.mem_sdi_prev
-cpu.mem_sdo_ls_addr0
 @200
 -
 -Instruction
@@ -75,23 +77,41 @@ cpu.bit_ctr[3:0]
 cpu.alu_result
 [color] 4
 cpu.pc_dl
-cpu.pc_dr
-cpu.pc_ql
 cpu.pc_qr
-cpu.pc_l_nr
+@22
+cpu.pc_q_all[15:0]
+@28
+cpu.alu_result
 @200
 -
+-Address Register
+@22
+[color] 5
+cpu.bit_ctr[3:0]
+@28
+cpu.ar_dl
+cpu.ar_ql
+cpu.ar_ql_next
+cpu.ar_l_nr
+@200
+-
+@28
+cpu.regfile_u.loop_gprs[4].gpr_shifter.reg_u.clk
+cpu.regfile_u.loop_gprs[4].gpr_shifter.reg_u.dl
+@22
+cpu.regfile_u.loop_gprs[4].gpr_shifter.reg_u.q_all[15:0]
+@28
+cpu.regfile_u.loop_gprs[4].gpr_shifter.reg_u.qr
+@23
+cpu.regfile_u.q[4][15:0]
+@200
 -Register File
 @22
 [color] 5
 cpu.bit_ctr[3:0]
 @28
-cpu.regfile_shift_l_nr
-cpu.reg_rd_ql
 cpu.reg_rd_qr
-cpu.reg_rs_ql
 cpu.reg_rs_qr
-cpu.reg_rt_ql
 cpu.reg_rt_qr
 @200
 -
@@ -110,8 +130,6 @@ cpu.alu_op_s
 cpu.alu_op_t
 cpu.alu_result
 cpu.alu_co
-@29
-cpu.alu_shift[1:0]
 @200
 -
 @28
