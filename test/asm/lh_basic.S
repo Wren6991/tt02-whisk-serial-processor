@@ -6,26 +6,26 @@ entry:
 	add r0, pc, @test_data
 
 	// Try each add mode
-	ld r1, r0
+	lh r1, r0
 	out r1
 
-	ld2 r2, r0, #2
+	lh  r2, r0, #2
 	out r2
 
-	ldib r3, r0, #4
+	lhib r3, r0, #4
 	out r3
 
-	// ldia will appear to do nothing at first, but doing a plain load will
+	// lhia will appear to do nothing at first, but doing a plain load will
 	// show that the register has incremented.
-	ldia r4, r0, #2
+	lhia r4, r0, #2
 	out r4
 	out r0
-	ld r5, r0
+	lh r5, r0
 	out r5
 
 	// Negative displacement -- make sure all bits are getting to adder
 	mov r5, r0
-	ld2 r0, r5, #-6
+	lh r0, r5, #-6
 	out r0
 
 	// PC-relative, clear regs to avoid possibility of accidentally using them
@@ -35,9 +35,10 @@ entry:
 	mov r3, #0
 	mov r4, #0
 	mov r5, #0
-	ld2 r0, pc, @test_data
-	out pc
+	lh r0, pc, @test_data
 	out r0
+	add r1, pc, zero
+	out r1
 
 	out #0x7357
 	out #0xdead

@@ -5,14 +5,14 @@ OPC_ANDN         = 0x3
 OPC_OR           = 0x4
 OPC_SHIFT        = 0x5
 OPC_INOUT        = 0x6
-OPC_LD           = 0x8
-OPC_LDIA         = 0x9
-OPC_LD2          = 0xa
-OPC_LDIB         = 0xb
-OPC_ST           = 0xc
-OPC_STIA         = 0xd
-OPC_ST2          = 0xe
-OPC_STIB         = 0xf
+OPC_LB           = 0x8
+OPC_LHIA         = 0x9
+OPC_LH           = 0xa
+OPC_LHIB         = 0xb
+OPC_SB           = 0xc
+OPC_SHIA         = 0xd
+OPC_SH           = 0xe
+OPC_SHIB         = 0xf
 
 OPC2_SRL         = 0x0
 OPC2_SRA         = 0x1
@@ -20,6 +20,9 @@ OPC2_SLL         = 0x4
 
 OPC2_IN          = 0x0
 OPC2_OUT         = 0x4
+
+OPC2_LB          = 0x0
+OPC2_LBS         = 0x4
 
 INSTR_OPC_LSB    = 0
 INSTR_OPC_MASK   = 0x000f

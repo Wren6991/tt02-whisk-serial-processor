@@ -30,7 +30,7 @@ class WhiskCPU:
 		instr_rs   = (instr & INSTR_RS_MASK  ) >> INSTR_RS_LSB
 		instr_rd   = (instr & INSTR_RD_MASK  ) >> INSTR_RD_LSB
 
-		have_imm_operand = instr_rt == 6
+		have_imm_operand = instr_rt == 7
 		condition_true = [
 			True ,  True,
 			self.n, not self.n,
@@ -48,9 +48,9 @@ class WhiskCPU:
 
 		imm_data = self.mem[self.pc] | (self.mem[(self.pc + 1) & self.REG_MASK] << 8)
 
-		operand_d = (self.r + [0,        self.pc])[instr_rd]
-		operand_s = (self.r + [0,        self.pc])[instr_rs]
-		operand_t = (self.r + [imm_data, self.pc])[instr_rt]
+		operand_d = (self.r + [0, self.pc ])[instr_rd]
+		operand_s = (self.r + [0, self.pc ])[instr_rs]
+		operand_t = (self.r + [0, imm_data])[instr_rt]
 
 		writeback_data = None
 		out_data = None
@@ -58,6 +58,8 @@ class WhiskCPU:
 		if instr_opc & OP_MASK_LDST:
 			addr_sum = (operand_s + operand_t) & self.REG_MASK
 			addr = addr_sum if (instr_opc & OP_MASK_LDST_AA) else operand_s
+			byte = not(instr_opc & (OP_MASK_LDST_AA | OP_MASK_LDST_AR))
+			sbyte = byte and (instr_rt == OPC2_LBS)
 			# Carry is the carry-out of the address addition, always
 			if instr_cond == 0: self.c = addr_sum != operand_s + operand_t
 			# Address writeback is visible to the store data, so do it first.
@@ -68,11 +70,16 @@ class WhiskCPU:
 					self.pc = addr_sum
 			if instr_opc & OP_MASK_ST:
 				self.mem[addr] = operand_d & 0xff
-				self.mem[(addr + 1) & self.REG_MASK] = (operand_d >> 8) & 0xff
+				if not byte:
+					self.mem[(addr + 1) & self.REG_MASK] = (operand_d >> 8) & 0xff
 				if instr_cond == 0: self.z = operand_d == 0
 				if instr_cond == 0: self.n = (operand_d & 0x8000) != 0
 			else:
 				writeback_data = self.mem[addr] | (self.mem[(addr + 1) & self.REG_MASK] << 8)
+				if byte:
+					writeback_data = writeback_data & 0xff
+				if sbyte:
+					writeback_data = (writeback_data - ((writeback_data & 0x80) << 1)) & self.REG_MASK
 		elif instr_opc == OPC_ADD:
 			writeback_data = (operand_s + operand_t) & self.REG_MASK
 			if instr_cond == 0: self.c = writeback_data != operand_s + operand_t

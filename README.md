@@ -26,31 +26,47 @@ Whisk is a 16-bit bit-serial processor, designed in a hurry for TinyTapeout 2.
 
 ## Direction
 
-Instructions are 16-bit. Registers are 16-bit. Designed to execute from a serial SPI RAM in sequential mode (e.g. Microchip 23K256T-I). SCK is driven at the same frequency as the scan controller clkdiv (12 kHz / 2). The SPI SRAM does not power up in sequential mode, so the host will 
+Instructions are 16-bit. Registers are 16-bit. Designed to execute from a serial SPI RAM in sequential mode (e.g. Microchip 23K256T-I). SCK is driven at the same frequency as the processor's clock input.
 
 Each nonsequential access has an initial cost of 24 SCK cycles, plus some time to cycle the chip select. Each data bit then costs one SCK cycle, as long as addresses are sequential. Therefore we keep addresses sequential as much as possible.
 
-Most instructions to take 32 cycles: 16 to fetch the instruction (the fetch phase), and 16 to cycle through all bits of GPRs and PC (the execute phase). If the PC update is incremental, we fetch the next instruction immediately without having to issue a new SPI address. During the execute phase, we can read a 16-bit immediate following the instruction with no extra time cost, since this is a sequential fetch. There is no need to buffer this read, it can be muxed straight into the GPR read bus. For a TT2 scan refresh rate of 12 kHz, and an SPI clock of scan / 2, this means an execution speed of 187.5 instructions per second for reg+reg and reg+imm instructions.
+Most instructions take 32 cycles: 16 to fetch the instruction (the fetch phase), and 16 to cycle through all bits of GPRs and PC (the execute phase). If the PC update is incremental, we fetch the next instruction immediately without having to issue a new SPI address. During the execute phase, we can read a 16-bit immediate following the instruction with no extra time cost, since this is a sequential fetch. There is no need to buffer this read, it can be muxed straight into the GPR read bus. For a TT2 scan refresh rate of 12 kHz, and an SPI clock of scan / 2, this means an execution speed of 187.5 instructions per second for reg+reg and reg+imm instructions.
 
 GPR cycling will be LSB-first, to propagate carries, so this implies the layout of bits in the SRAM will also be LSB-first in each byte. (This bit order convention is transparent to us, but host programs e.g. assemblers need to be aware of it.)
 
-With a view to supporting larger programs or even simple operating systems in the future, we try to avoid any size or performance penalties for position-independent code. Loads and stores can be PC-relative with a full signed 16-bit displacement, and jumps and branches also have a full 16-bit offset from PC. We also try to make sure common stack idioms, like popping into PC to return from a function, map to single instructions if it does not compromise the performance or the control complexity.
+With a view to supporting larger programs or even simple operating systems in the future, try to avoid any size or performance penalties for position-independent code. Loads and stores can be PC-relative with a full signed 16-bit displacement, and jumps and branches also have a full 16-bit offset from PC. We also try to make sure common stack idioms, like popping into PC to return from a function, map to single instructions if it does not compromise the performance or the control complexity.
 
 > *Commentary on how I arrived at a decision, including failed design experiments, will be formatted like this paragraph, to keep it mostly separate from the factual description.*
 
 ## Registers
 
-There are 6x 16-bit general-purpose registers, r0 through r5 (96 bits total). The program counter is also 16 bits, and can be read/written by any instruction, selected by register index r7. Reading the program counter returns the address of the current instruction plus two. To minimise cost per bit, there are no shift controls: the program counter and general purpose registers will rotate one bit to the right *every cycle*, and every operation takes a multiple of 16 cycles.
+There are 6x 16-bit general-purpose registers, `r0` through `r5` (96 bits total). The program counter `pc` is also 16 bits, and can be read/written by any instruction. Reading `pc` returns the address of the current instruction plus two.
 
-> *This means we use the simplest possible D flip-flops for our shift registers, instead of relying on scan flops for direction control, or enable flops for shift enable control. Clock gates are a low-area alternative for enabling/disabling the shift, but this design uses CXXRTL for simulation, which currently doesn't support gated clocks. In practice we lose 10 cycles per load and 12 cycles per store by making GPRs/PC completely uncontrolled.*
+Since the design is bit-serial, registers are implemented as shift registers to reduce routing/muxing. To minimise cost per bit, the program counter and general purpose registers will rotate one bit to the right *every cycle*, and every operation takes a multiple of 16 cycles. There is no hardware mechanism to enable/disable the shifting of the registers, or to control its direction.
 
-Non-architectural registers should be kept to a minimum: we probably do need a current instruction register, and a dedicated address register that can shift in two directions (LSB-first for serial-addition, then MSB-first to issue an address to the SPI) is just about worth it if it lets us make the GPRs and PC shift unidirectionally.
+> *This means we use the simplest possible D flip-flops for our shift registers, instead of relying on scan flops for direction control, or enable flops for shift enable control. In the Skywater 130 nm PDK, a plain DFF is around three quarters the size of a scan flop (DFF with mux), which is again much smaller than plain DFF + mux. Clock gates are a low-area alternative for enabling/disabling the shift, but this design uses CXXRTL for simulation, which currently doesn't support gated clocks. We lose 12 cycles per load and 14 cycles per store by making GPRs/PC completely uncontrolled.*
 
-Instructions are three-address-code, because we can afford the encoding space, and we are relatively register-poor so would like to avoid unnecessary clobbering. PC is available as register index 7, for reads/writes by any instruction.
+Non-architectural registers should be kept to a minimum: we probably can't get away without a current instruction register, and a dedicated address register that can shift in two directions (LSB-first for serial-addition, then MSB-first to issue an address to the SPI) is worth it if it lets us make the GPRs and PC shift unidirectionally.
 
-Register index r6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination allows flags to be set without clobbering any registers, and there are some useful pseudo-ops with zero for the first operand. For the *second* operand, index r6 indicates a 16-bit literal following the instruction.
+Instructions are three-address-code, because we can afford the encoding space, and we are relatively register-poor so would like to avoid unnecessary clobbering. Register indices are 3-bit, and have the following mapping:
 
-> *Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.*
+| Index | Destination `rd`    | First operand `rs`  | Second operand `rt`  |
+| ----- | ------------------- | ------------------- | -------------------- |
+| 0     | Register `r0`       | Register `r0`       | Register `r0`        |
+| 1     | Register `r1`       | Register `r1`       | Register `r1`        |
+| 2     | Register `r2`       | Register `r2`       | Register `r2`        |
+| 3     | Register `r3`       | Register `r3`       | Register `r3`        |
+| 4     | Register `r4`       | Register `r4`       | Register `r4`        |
+| 5     | Register `r5`       | Register `r5`       | Register `r5`        |
+| 6     | Zero register       | Zero register       | Zero register        |
+| 7     | Program counter `pc`| Program counter `pc`| 16-bit immediate     |
+
+
+Register index 6 is a hardwired zero register. It always reads as zero, and writes have no effect. Using a zero register as the destination allows flags to be set without clobbering any registers, and there are some useful pseudo-ops with zero operands that save the cost of an immediate.
+
+The program counter can be written to through `rd` index 7, and can be used as the first operand via `rs` index 7. This covers almost all uses of `pc`, so for the *second* operand, index 7 instead indicates a 16-bit literal following the instruction should be used as an immediate operand.
+
+The only real loss from making `pc` unavailable as the second operand is `out pc`, which is impossible to encode because IN/OUT use the `rs` index for their minor opcode. This instruction would have been useful for tracing.
 
 ## Instructions
 
@@ -72,7 +88,7 @@ Of the 16 major opcodes, 15 are currently allocated:
 * 0x0: ADD  `rd = rs + rt`
 * 0x1: SUB  `rd = rs - rt`
 * 0x2: AND  `rd = rs & rt`
-* 0x3: ANDN `rd = ~rs & rt`
+* 0x3: ANDN `rd = rs & ~rt`
 * 0x4: OR   `rd = rs | rt`
 * 0x5: Shift (minor opcode in `rt`)
 	* 0x0: SRL `rd = rs >> 1`
@@ -84,11 +100,11 @@ Of the 16 major opcodes, 15 are currently allocated:
 * 0x8 through 0xb: LD (4 variants, see "Memory Accesses")
 * 0xc through 0xf: ST (4 variants, see "Memory Accesses")
 
-> *No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber. The use of XOR + imm to do NOT also works with ANDN. Since ANDN inverts its first operand, inverted registers can be ANDed with immediates; note there is no use in inverting immediates.*
+> *No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber. The use of XOR + imm to do NOT is performed better by ANDN with a zero register.*
 
 > *No multi-bit shift. Efficient multi-bit shifts require control of the shifting of the register file. Even if the register file shift direction is controllable, this would take 32 cycles: 16 to get shift amount to nearest multiple of 2 by dithering the left/right shift signal, then next 16 to shift by 1 by shifting through the ALU carry flop. Don't feel this is worth the control complexity, and we can save opcode space by putting the shifts on a minor opcode.*
 
-> *One of the 16 major opcodes is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift and In/out.*
+> *One of the 16 major opcodes is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift, In/out and byte load/store.*
 
 Condition codes can be applied to any instruction, and may be true or false depending on the Z/C/V flag values at that point in the program (see "Flags"). Instructions with false condition codes have no side effects other than incrementing the program counter. Instructions with true condition codes execute the same as unconditional instructions, except that they do not update the flags.
 
@@ -148,6 +164,29 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 
 (TODO should loads set the carry flag to bit 7?)
 
+#### Signed Comparisons
+
+We don't have a `V` (overflow) flag, to save on encoding space, so there's no direct way to implement signed comparisons. Signed less than `a <s b`can be defined by the expression:
+
+```
+sgn(a) == sgn(b) ? sgn(a - b) : sgn(a)
+```
+
+Where `sgn(x)` is the most significant bit of `x`. One sequence of instructions to set the `N` flag to `a <s b` is:
+
+```
+slt:
+	and x, a, #0x8000 // x is a scratch register
+	add x, b          // N is sgn(a) ^ sgn(b)
+	sub.ns x, a, b    // ? a + b
+	mov.nc x, a       // : a
+	cmp x, zero       // N is a <s b
+```
+
+This takes 12 bytes of code and a constant 144 cycles (4.5 instructions).
+
+> *This is why hardware engineers don't believe in signed arithmetic. In fact the N flag on Whisk actually stands for "Not less than 32768".*
+
 ### Memory Accesses
 
 Load/store instructions move data between memory and the register file. This is a nonsequential SRAM access, followed by a nonsequential instruction fetch, so the best possible 16-bit load costs 16 + 1 + 24 + 1 + 16 + 24 + 1 = 84 cycles. (Fetch, pulse chip select high, load cmd + addr, sampling delay, load data, pulse chip select high, fetch cmd + addr, sampling delay.)
@@ -158,12 +197,12 @@ Addresses are issued to the SPI SRAM in MSB-first order, but we generally read t
 
 The address register captures either the sum of the two operands, or just the first operand. There is also an option to write back the sum to the first operand register. This supports the following four cases:
 
-| Address capture | Address writeback | Mnemonic      | Operation                                                            |
-| --------------- | ----------------- | --------      | -------------------------------------------------------------------  |
-| First operand   | None              | `ld`/`st`     | Load/store addressed by register                                     |
-| First operand   | Sum of operands   | `ldia`/`stia` | Load/store with post-increment/decrement, e.g. stack pop             |
-| Sum of operands | None              | `ld2`/`st2`   | Load/store addressed by register + register, or register + immediate |
-| Sum of operands | Sum of operands   | `ldib`/`stib` | Load/store with pre-increment/decrement, e.g. stack push             |
+| Address capture | Address writeback | Mnemonic        | Operation                                                            |
+| --------------- | ----------------- | --------------- | -------------------------------------------------------------------  |
+| First operand   | None              | `lb`/`lbs`/`sb` | Load/store byte (`rt` available as a minor opcode)                   |
+| First operand   | Sum of operands   | `lhia`/`shia`   | Load/store with post-increment/decrement, e.g. stack pop             |
+| Sum of operands | None              | `lh`/`sh`       | Load/store addressed by register + register, or register + immediate |
+| Sum of operands | Sum of operands   | `lhib`/`shib`   | Load/store with pre-increment/decrement, e.g. stack push             |
 
 If the same register is used for both address writeback and store data, the address writeback is visible to the store data.
 
@@ -171,50 +210,39 @@ The actual cost of a load/store is 96 cycles: the command + address sections are
 
 #### Byte Accesses
 
-We only have halfword (16-bit, register-sized) accesses, but these can be byte-aligned.
+Byte loads still perform the full 16-bit SPI read, but mask off or sign-extend into the 8 MSBs of the result. Similarly, byte stores still serialise the full 16 bits of data, but stop the SPI clock for the last 8 cycles.
 
-A byte load is:
+Byte accesses do not use the second operand, so the `rt` index is available for minor opcodes. Byte accesses are register-addressed only. This doesn't feel like too great a penalty: most of our stack operations should be register-sized, and for operations like `memcpy` we would instead use byte-aligned halfword-sized load/stores for most of the accesses.
 
-```
-	ld  rdata, raddr
-	and rdata, rdata, #0xff
-```
-
-A byte store is:
-
-```
-	ld  rscratch, raddr
-	and rscratch, rscratch, #0xff00
-	or  rdata, rdata, rscratch
-	st  rdata, raddr
-```
-
-This doesn't seem too unreasonable, but adding support for byte accesses would be fairly inexpensive:
-
-* Byte loads would still load the full 16 bits, but mask or sign-extend into bits 15:8 of the result
-* Byte stores would still shift out the full 16 bits, but would gate the SPI clock for the last 8 cycles
-
-One suitable encoding hole for byte load/stores is the `rt` register specifier for non-incrementing non-decrementing loads, which don't use this operand. Push/pops are mostly going to be register values, so just having register-addressed byte loads/stores is probably acceptable.
-
-Since byte accesses can easily be emulated with the existing instructions, this feels like future work.
+The only use for the minor opcode at the moment is to control sign extension of byte loads.
 
 ### Pseudo-ops
 
 Some useful operations that are subsets of machine instructions:
 
 ```
-mov rd, rs    -> add rd, zero, rs      // Or rs can be #imm
-ldi rd, #imm  -> add rd, zero, #imm
+mov rd, rs    -> add rd, zero, rs        // rs can also be #imm
 not rd, rs    -> andn rd, zero, rs
-cmp rs, rt    -> sub zero, rs, rt      // Compare integers
-tst rs, rt    -> and zero, rs, rt      // Test masked bits set
-tstn rs, rt   -> andn zero, rs, rt     // Test unmasked bits set
-j label       -> add pc, pc, @label    // Assembler calculates immediate offset to label
-lda rd, label -> add rd, pc, @label    // Assembler calculates immediate offset to label
-push rd       -> stib rd, sp, -2       // Store with negative increment-before
-pop rd        -> ldia rd, sp,  2       // Load with positive increment-after
-ret           -> ldia pc, sp,  2
-nop           -> add.pr zero, zero, r0 // Doesn't write flags either
+cmp rs, rt    -> sub zero, rs, rt        // Compare integers
+tst rs, rt    -> and zero, rs, rt        // Test masked bits set
+tstn rs, rt   -> andn zero, rs, rt       // Test unmasked bits set
+j label       -> add pc, pc, @label      // Assembler calculates immediate offset to label
+bcc label     -> add.cc pc, pc, @label
+la rd, label  -> add rd, pc, @label      // Assembler calculates immediate offset to label
+push rd       -> shib rd, sp, -2         // Store with negative increment-before
+pop rd        -> lhia rd, sp,  2         // Load with positive increment-after
+ret           -> lhia pc, sp,  2
+nop           -> add.pr zero, zero, zero // Doesn't write flags either
+```
+
+### Bogus-ops
+
+Some dubious operations that nevertheless exist:
+
+```
+vec label     -> lhib pc, pc, @label   // Vector through a function pointer stored at some label
+trace rs      -> shia pc, rs, #2       // Record program counter to buffer
+leap          -> sll pc, pc            // Jump to twice the current instruction address, plus 4
 ```
 
 ### Execution Timings

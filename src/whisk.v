@@ -248,15 +248,15 @@ localparam [3:0] OP_OR          = 4'h4; // rd =  rs | rt
 localparam [3:0] OP_SHIFT       = 4'h5; // Minor opcode in rt
 localparam [3:0] OP_INOUT       = 4'h6; // Minor opcode in rs
 
-localparam [3:0] OP_LD          = 4'h8; // rd = mem[rs     ];
-localparam [3:0] OP_LD_IA       = 4'h9; // rd = mem[rs     ]; rs += rt;
-localparam [3:0] OP_LD_ADD      = 4'ha; // rd = mem[rs + rt];
-localparam [3:0] OP_LD_IB       = 4'hb; // rd = mem[rs + rt]; rs += rt;
+localparam [3:0] OP_LB          = 4'h8; // rd = mem[rs     ];
+localparam [3:0] OP_LH_IA       = 4'h9; // rd = mem[rs     ]; rs += rt;
+localparam [3:0] OP_LH_ADD      = 4'ha; // rd = mem[rs + rt];
+localparam [3:0] OP_LH_IB       = 4'hb; // rd = mem[rs + rt]; rs += rt;
 
-localparam [3:0] OP_ST          = 4'hc; // mem[rs     ] = rd;
-localparam [3:0] OP_ST_IA       = 4'hd; // mem[rs     ] = rd; rs += rt;
-localparam [3:0] OP_ST_ADD      = 4'he; // mem[rs + rt] = rd;
-localparam [3:0] OP_ST_IB       = 4'hf; // mem[rs + rt] = rd; rs += rt;
+localparam [3:0] OP_SB          = 4'hc; // mem[rs     ] = rd;
+localparam [3:0] OP_SH_IA       = 4'hd; // mem[rs     ] = rd; rs += rt;
+localparam [3:0] OP_SH_ADD      = 4'he; // mem[rs + rt] = rd;
+localparam [3:0] OP_SH_IB       = 4'hf; // mem[rs + rt] = rd; rs += rt;
 
 // Minor opcodes (rt)
 localparam [2:0] OP2_SRL        = 3'h0;
@@ -415,7 +415,7 @@ always @ (*) begin
 	end else if (state == S_FETCH) begin
 		if (bit_ctr == (INSTR_RT_MSB + 1)) begin
 			// Grab rt as it goes past (this is why rt is not the MSBs!)
-			instr_has_imm_operand_nxt = instr[W_INSTR-1 -: 3] == 3'd6;
+			instr_has_imm_operand_nxt = instr[W_INSTR-1 -: 3] == 3'd7;
 		end
 		if (bit_ctr == (INSTR_COND_MSB + 1)) begin
 			// Decode condition as it goes past
@@ -526,8 +526,7 @@ wire alu_op_s_next =
 	instr_rs == 3'd7 ? pc_qr_next   : reg_rs_qr_next;
 
 wire alu_op_t =
-	instr_rt == 3'd7 ? pc_qr        :
-	instr_rt == 3'd6 ? mem_sdi_prev : reg_rt_qr;
+	instr_rt == 3'd7 ? mem_sdi_prev : reg_rt_qr;
 
 reg alu_ci;
 wire [1:0] alu_add = alu_op_s +  alu_op_t + (~|bit_ctr ? 1'b0 : alu_ci);

@@ -8,38 +8,41 @@ import re
 import sys
 from whisk_asm_const import *
 
-# Records of the form: (opcode, expect rd, expect rs, expect rt)
+# Records of the form: (opcode, op rd, op rs, op rt, rt is optional)
 INSTR = {
-	# Two-operand instructions
-	"add":    (OPC_ADD,                                                      True,  True,  True ),
-	"sub":    (OPC_SUB,                                                      True,  True,  True ),
-	"and":    (OPC_AND,                                                      True,  True,  True ),
-	"andn":   (OPC_ANDN,                                                     True,  True,  True ),
-	"or":     (OPC_OR,                                                       True,  True,  True ),
-	"ldia":   (OPC_LDIA,                                                     True,  True,  True ),
-	"ld2":    (OPC_LD2,                                                      True,  True,  True ),
-	"ldib":   (OPC_LDIB,                                                     True,  True,  True ),
-	"stia":   (OPC_STIA,                                                     True,  True,  True ),
-	"st2":    (OPC_ST2,                                                      True,  True,  True ),
-	"stib":   (OPC_STIB,                                                     True,  True,  True ),
-	# Single-operand with no minor opcode
-	"ld":     (OPC_LD,                                                       True,  True,  False),
-	"st":     (OPC_ST,                                                       True,  True,  False),
-	# Single-operand with minor opcode in rt
-	"sll":    (OPC_SHIFT | (OPC2_SLL << INSTR_RT_LSB),                       True,  True,  False),
-	"sra":    (OPC_SHIFT | (OPC2_SRA << INSTR_RT_LSB),                       True,  True,  False),
-	"srl":    (OPC_SHIFT | (OPC2_SRL << INSTR_RT_LSB),                       True,  True,  False),
-	# Single-operand with minor opcode in rs
-	"in":     (OPC_INOUT | (OPC2_IN  << INSTR_RS_LSB) | (6 << INSTR_RT_LSB), True,  False, False),
-	"out":    (OPC_INOUT | (OPC2_OUT << INSTR_RS_LSB) | (6 << INSTR_RD_LSB), False, False, True ),
-	"in2":    (OPC_INOUT | (OPC2_IN  << INSTR_RS_LSB),                       True,  False, True ),
-	"out2":   (OPC_INOUT | (OPC2_OUT << INSTR_RS_LSB),                       True,  False, True ),
+	# Two reg operands
+	"add":    (OPC_ADD,                                                      1, 1, 1, 0),
+	"sub":    (OPC_SUB,                                                      1, 1, 1, 0),
+	"and":    (OPC_AND,                                                      1, 1, 1, 0),
+	"andn":   (OPC_ANDN,                                                     1, 1, 1, 0),
+	"or":     (OPC_OR,                                                       1, 1, 1, 0),
+	# One reg operand with minor opcode in rt
+	"sll":    (OPC_SHIFT | (OPC2_SLL << INSTR_RT_LSB),                       1, 1, 0, 0),
+	"sra":    (OPC_SHIFT | (OPC2_SRA << INSTR_RT_LSB),                       1, 1, 0, 0),
+	"srl":    (OPC_SHIFT | (OPC2_SRL << INSTR_RT_LSB),                       1, 1, 0, 0),
+	# One reg with minor opcode in rs
+	"in":     (OPC_INOUT | (OPC2_IN  << INSTR_RS_LSB) | (6 << INSTR_RT_LSB), 1, 0, 0, 0),
+	"out":    (OPC_INOUT | (OPC2_OUT << INSTR_RS_LSB) | (6 << INSTR_RD_LSB), 0, 0, 1, 0),
+	"in2":    (OPC_INOUT | (OPC2_IN  << INSTR_RS_LSB),                       1, 0, 1, 0),
+	"out2":   (OPC_INOUT | (OPC2_OUT << INSTR_RS_LSB),                       1, 0, 1, 0),
+	# Double-reg memory operand
+	"lhia":   (OPC_LHIA,                                                     1, 1, 1, 1),
+	"lh":     (OPC_LH,                                                       1, 1, 1, 1),
+	"lhib":   (OPC_LHIB,                                                     1, 1, 1, 1),
+	"shia":   (OPC_SHIA,                                                     1, 1, 1, 1),
+	"sh":     (OPC_SH,                                                       1, 1, 1, 1),
+	"shib":   (OPC_SHIB,                                                     1, 1, 1, 1),
+	# Single-reg memory, minor in rt
+	"lb":     (OPC_LB | (OPC2_LB << INSTR_RT_LSB),                           1, 1, 0, 0),
+	"lbs":    (OPC_LB | (OPC2_LBS << INSTR_RT_LSB),                          1, 1, 0, 0),
+	"sb":     (OPC_LB | (OPC2_LBS << INSTR_RT_LSB),                          1, 1, 0, 0),
 	# Pseudo-ops which don't need macros
-	"mov":    (OPC_ADD  | (6 << INSTR_RS_LSB),                               True,  False, True ),
-	"not":    (OPC_ANDN | (6 << INSTR_RS_LSB),                               True,  False, True ),
-	"cmp":    (OPC_SUB  | (6 << INSTR_RD_LSB),                               False, True,  True ),
-	"tst":    (OPC_AND  | (6 << INSTR_RD_LSB),                               False, True,  True ),
-	"tstn":   (OPC_ANDN | (6 << INSTR_RD_LSB),                               False, True,  True ),
+	"mov":    (OPC_ADD  | (6 << INSTR_RS_LSB),                               1, 0, 1, 0),
+	"not":    (OPC_ANDN | (6 << INSTR_RS_LSB),                               1, 0, 1, 0),
+	"cmp":    (OPC_SUB  | (6 << INSTR_RD_LSB),                               0, 1, 1, 0),
+	"cmn":    (OPC_ADD  | (6 << INSTR_RD_LSB),                               0, 1, 1, 0),
+	"tst":    (OPC_AND  | (6 << INSTR_RD_LSB),                               0, 1, 1, 0),
+	"tstn":   (OPC_ANDN | (6 << INSTR_RD_LSB),                               0, 1, 1, 0),
 }
 
 REGS = {
@@ -66,9 +69,9 @@ COND = {
 	"zc": 0x7,
 }
 
-def next_word(l, i):
+def next_word(l, l_full, i):
 	if i >= len(l) - 1:
-		raise Exception(f"Unexpected EOL on line '{' '.join(l)}'")
+		raise Exception(f"Unexpected EOL on line '{l_full}'")
 	return i + 1
 
 def get_immediate(l, w):
@@ -79,6 +82,18 @@ def get_immediate(l, w):
 	if imm < -1 << 15 or imm > (1 << 16) - 1:
 		raise Exception(f"Immediate operand '{w}' is out of range on line '{l_full}'")
 	return imm & 0xffff
+
+def get_reg(l, l_full, i, exclude=[], allow_comma=False):
+	if l[i] not in REGS:
+		raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
+	if l[i] in exclude:
+		raise Exception(f"Register not allowed in this position: '{l[i]}' on line '{l_full}'")
+	regnum = REGS[l[i]]
+	# Optional comma
+	if allow_comma and i < len(l) - 1 and l[i + 1] == ",":
+		i += 1
+	return i, regnum
+
 
 def assemble(lines):
 	output = []
@@ -113,50 +128,43 @@ def assemble(lines):
 		if l[0] not in INSTR:
 			raise Exception(f"Unrecognised opcode '{l[0]}' on line '{l_full}'")
 		imm_operand = None
-		opc, expect_rd, expect_rs, expect_rt = INSTR[l[0]]
+		opc, expect_rd, expect_rs, expect_rt, rt_optional = INSTR[l[0]]
 		i = 0
 
 		# Optional condition code
 		if len(l) > 1 and l[1] == ".":
-			i = next_word(l, i)
-			i = next_word(l, i)
+			i = next_word(l, l_full, i)
+			i = next_word(l, l_full, i)
 			if l[i] not in COND:
 				raise Exception(f"Unrecognised condition code '{l[i]}' on line '{l_full}'")
 			opc |= COND[l[i]] << INSTR_COND_LSB
 
 		if expect_rd:
-			i = next_word(l, i)
-			if l[i] not in REGS:
-				raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
-			opc |= REGS[l[i]] << INSTR_RD_LSB
-			# Optional comma
-			if (expect_rs or expect_rt) and i < len(l) - 1 and l[i + 1] == ",":
-				i += 1
+			i = next_word(l, l_full, i)
+			i, r = get_reg(l, l_full, i, allow_comma=expect_rs or expect_rt or expect_mem or expect_mem2)
+			opc |= r << INSTR_RD_LSB
 
 		if expect_rs:
-			i = next_word(l, i)
-			if l[i] not in REGS:
-				raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
-			opc |= REGS[l[i]] << INSTR_RS_LSB
-			# Optional comma
-			if expect_rt and i < len(l) - 1 and l[i + 1] == ",":
-				i += 1
+			i = next_word(l, l_full, i)
+			i, r = get_reg(l, l_full, i, allow_comma=expect_rt)
+			opc |= r << INSTR_RS_LSB
 
-		if expect_rt:
-			i = next_word(l, i)
-			if l[i] == "@":
-				i = next_word(l, i)
+		if expect_rt and rt_optional and i == len(l) - 1:
 				opc |= 6 << INSTR_RT_LSB
+		elif expect_rt:
+			i = next_word(l, l_full, i)
+			if l[i] == "@":
+				i = next_word(l, l_full, i)
+				opc |= 7 << INSTR_RT_LSB
 				imm_operand = 0
 				relocs.append((len(output) + 1, l[i]))
 			elif l[i] == "#":
-				i = next_word(l, i)
-				opc |= 6 << INSTR_RT_LSB
+				i = next_word(l, l_full, i)
+				opc |= 7 << INSTR_RT_LSB
 				imm_operand = get_immediate(l_full, l[i])
 			else:
-				if l[i] not in REGS or l[i] == "zero":
-					raise Exception(f"Not a valid register: '{l[i]}' on line '{l_full}'")
-				opc |= REGS[l[i]] << INSTR_RT_LSB
+				i, r = get_reg(l, l_full, i, exclude=["pc"])
+				opc |= r << INSTR_RT_LSB
 
 		if i < len(l) - 1:
 			raise Exception(f"Garbage at end of line '{l_full}'")
