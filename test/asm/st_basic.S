@@ -12,11 +12,11 @@ entry:
 
 	add r3, r0, #2
 	mov r4, #3
-	stia r3, r4, #2
+	stia r4, r3, #2
 
 	// Check increment-after took place
 	mov r5, #4
-	st r3, r5
+	st r5, r3
 
 	mov r0, #5
 	st2 r0, r3, #2

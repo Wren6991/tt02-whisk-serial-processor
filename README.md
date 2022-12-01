@@ -146,6 +146,8 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 * SLL/SRL/SRA set `C` to the bit shifted out of the register
 * Loads/stores carry into `C` from the sum of the two address operands, *even if the sum is not used for the actual load/store address*
 
+(TODO should loads set the carry flag to bit 7?)
+
 ### Memory Accesses
 
 Load/store instructions move data between memory and the register file. This is a nonsequential SRAM access, followed by a nonsequential instruction fetch, so the best possible 16-bit load costs 16 + 1 + 24 + 1 + 16 + 24 + 1 = 84 cycles. (Fetch, pulse chip select high, load cmd + addr, sampling delay, load data, pulse chip select high, fetch cmd + addr, sampling delay.)
@@ -279,7 +281,6 @@ Alternatively I can look a bit closer at the sampling logic, and try to get the 
 
 # TODO
 
-* Write simulator
 * Tests!
 * Check polarity and timing of shift register strobes
 * Fully understand timing of SPI input

@@ -29,7 +29,7 @@ tmp/%.ref: tmp/%.bin ../tools/whisksim
 	../tools/whisksim $< > $@
 
 tmp/%.diff: tmp/%.ref tmp/%.out
-	diff $^ | tee $@
+	diff $^
 
 # Useless targets to stop make from deleting test output:
 bins: $(patsubst ../asm/%.S,tmp/%.bin,$(wildcard ../asm/*))

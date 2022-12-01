@@ -676,7 +676,7 @@ wire mem_spi_addr =
 
 // Note: SPI commands are MSB-first (the commands here are 03h and 02h).
 localparam [15:0] SPI_INSTR_READ  = 16'hc000 >> 1;
-localparam [15:0] SPI_INSTR_WRITE = 16'h8000;
+localparam [15:0] SPI_INSTR_WRITE = 16'h4000;
 
 wire mem_sdo_ls_addr_ph0 =
 	instr_op_st_nld ? SPI_INSTR_WRITE[bit_ctr] :
