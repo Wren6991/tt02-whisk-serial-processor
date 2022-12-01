@@ -59,76 +59,80 @@ class WhiskCPU:
 			addr_sum = (operand_s + operand_t) & self.REG_MASK
 			addr = addr_sum if (instr_opc & OP_MASK_LDST_AA) else operand_s
 			# Carry is the carry-out of the address addition, always
-			self.c = addr_sum != operand_s + operand_t
+			if instr_cond == 0: self.c = addr_sum != operand_s + operand_t
 			# Address writeback is visible to the store data, so do it first.
 			if instr_opc & OP_MASK_LDST_AR:
 				if instr_rs < 6:
-					self.regs[instr_rs] = addr_sum
+					self.r[instr_rs] = addr_sum
 				elif instr_rs == 7:
 					self.pc = addr_sum
 			if instr_opc & OP_MASK_ST:
 				self.mem[addr] = operand_d & 0xff
 				self.mem[(addr + 1) & self.REG_MASK] = (operand_d >> 8) & 0xff
+				if instr_cond == 0: self.z = operand_d == 0
+				if instr_cond == 0: self.n = (operand_d & 0x8000) != 0
 			else:
 				writeback_data = self.mem[addr] | (self.mem[(addr + 1) & self.REG_MASK] << 8)
 		elif instr_opc == OPC_ADD:
 			writeback_data = (operand_s + operand_t) & self.REG_MASK
-			self.c = writeback_data != operand_s + operand_t
+			if instr_cond == 0: self.c = writeback_data != operand_s + operand_t
 		elif instr_opc == OPC_SUB:
 			writeback_data = (operand_s - operand_t) & self.REG_MASK
-			self.c = operand_s >= operand_t
+			if instr_cond == 0: self.c = operand_s >= operand_t
 		elif instr_opc == OPC_AND:
 			writeback_data = operand_s & operand_t
-			self.c = writeback_data == self.REG_MASK
+			if instr_cond == 0: self.c = writeback_data == self.REG_MASK
 		elif instr_opc == OPC_ANDN:
 			writeback_data = ~operand_s & operand_t
-			self.c = writeback_data == self.REG_MASK
+			if instr_cond == 0: self.c = writeback_data == self.REG_MASK
 		elif instr_opc == OPC_OR:
 			writeback_data = operand_s | operand_t
-			self.c = writeback_data == self.REG_MASK
+			if instr_cond == 0: self.c = writeback_data == self.REG_MASK
 		elif instr_opc == OPC_SHIFT:
 			if instr_rt == OPC2_SRL:
 				writeback_data = operand_s >> 1
-				self.c = (operand_s & 1) != 0
+				if instr_cond == 0: self.c = (operand_s & 1) != 0
 			elif instr_rt == OPC2_SRA:
 				writeback_data = (operand_s >> 1) | (operand_s & 0x8000)
-				self.c = (operand_s & 1) != 0
+				if instr_cond == 0: self.c = (operand_s & 1) != 0
 			elif instr_rt == OPC2_SLL:
-				writeback_data = operand_s << 1
-				self.c = (operand_s & 0x8000) != 0
+				writeback_data = (operand_s << 1) & self.REG_MASK
+				if instr_cond == 0: self.c = (operand_s & 0x8000) != 0
 			else:
 				# Undefined
 				writeback_data = 0xeeee
-				self.c = False
+				if instr_cond == 0: self.c = False
 		elif instr_opc == OPC_INOUT:
 			if instr_rs == OPC2_IN:
 				# TODO: IN
 				writeback_data = 0xdead
-				self.c = False
+				if instr_cond == 0: self.c = False
 			elif instr_rs == OPC2_OUT:
 				# TODO: IN (OUT can also write back some IN data in some form)
 				writeback_data = 0xdead
-				self.c = False
+				if instr_cond == 0: self.c = False
 				out_data = operand_t
-				self.c = ((operand_s + operand_t) & (1 << self.REG_WIDTH)) != 0 # I think
+				if instr_cond == 0: self.c = ((operand_s + operand_t) & (1 << self.REG_WIDTH)) != 0 # I think
 			else:
 				# Undefined
 				writeback_data = 0xeeee
-				self.c = False
+				if instr_cond == 0: self.c = False
 		else:
 			# Undefined
 			writeback_data = 0xeeee
-			self.c = False
+			if instr_cond == 0: self.c = False
 
 		if have_imm_operand and instr_rd != 7:
 			self.pc = (self.pc + 2) & self.REG_MASK
 
-		if instr_rd == 7:
-			self.pc = writeback_data
-		elif instr_rd < 6:
-			self.r[instr_rd] = writeback_data
-		self.z = writeback_data == 0
-		self.n = (writeback_data & 0x8000) != 0
+		if writeback_data is not None:
+			if instr_rd == 7:
+				self.pc = writeback_data
+			elif instr_rd < 6:
+				self.r[instr_rd] = writeback_data
+			if instr_cond == 0:
+				self.z = writeback_data == 0
+				self.n = (writeback_data & 0x8000) != 0
 
 		return out_data
 
@@ -151,7 +155,7 @@ if __name__ == "__main__":
 		cpu.mem[i] = bitrev(x, 8)
 
 	out_history = []
-	cycles = args.cycles if args.cycles is not None else 1000 * 1000 * 1000
+	cycles = args.cycles if args.cycles is not None else 1000 * 1000
 	for i in range(cycles):
 		out_data = cpu.step()
 		if out_data is not None:

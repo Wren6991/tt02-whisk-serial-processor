@@ -19,9 +19,9 @@ INSTR = {
 	"ldia":   (OPC_LDIA,                                                     True,  True,  True ),
 	"ld2":    (OPC_LD2,                                                      True,  True,  True ),
 	"ldib":   (OPC_LDIB,                                                     True,  True,  True ),
-	"stib":   (OPC_STIA,                                                     True,  True,  True ),
+	"stia":   (OPC_STIA,                                                     True,  True,  True ),
 	"st2":    (OPC_ST2,                                                      True,  True,  True ),
-	"stib": (OPC_STIB,                                                     True,  True,  True ),
+	"stib":   (OPC_STIB,                                                     True,  True,  True ),
 	# Single-operand with no minor opcode
 	"ld":     (OPC_LD,                                                       True,  True,  False),
 	"st":     (OPC_ST,                                                       True,  True,  False),
@@ -159,7 +159,7 @@ def assemble(lines):
 				opc |= REGS[l[i]] << INSTR_RT_LSB
 
 		if i < len(l) - 1:
-			raise Exception(f"Garbage at end of line '{l[i]}'")
+			raise Exception(f"Garbage at end of line '{l_full}'")
 
 		# Our "disasm" is just the binary annotated with the assembly :)
 		output.append(opc)
