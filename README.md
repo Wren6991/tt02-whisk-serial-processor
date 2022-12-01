@@ -36,13 +36,13 @@ GPR cycling will be LSB-first, to propagate carries, so this implies the layout 
 
 With a view to supporting larger programs or even simple operating systems in the future, we try to avoid any size or performance penalties for position-independent code. Loads and stores can be PC-relative with a full signed 16-bit displacement, and jumps and branches also have a full 16-bit offset from PC. We also try to make sure common stack idioms, like popping into PC to return from a function, map to single instructions if it does not compromise the performance or the control complexity.
 
-> Commentary on how I arrived at a decision, including failed design experiments, will be formatted like this paragraph, to keep it mostly separate from the factual description.
+> *Commentary on how I arrived at a decision, including failed design experiments, will be formatted like this paragraph, to keep it mostly separate from the factual description.*
 
 ## Registers
 
 There are 6x 16-bit general-purpose registers, r0 through r5 (96 bits total). The program counter is also 16 bits, and can be read/written by any instruction, selected by register index r7. Reading the program counter returns the address of the current instruction plus two. To minimise cost per bit, there are no shift controls: the program counter and general purpose registers will rotate one bit to the right *every cycle*, and every operation takes a multiple of 16 cycles.
 
-(*This means we use the simplest possible D flip-flops for our shift registers, instead of relying on scan flops for direction control, or enable flops for shift enable control. Clock gates are a low-area alternative for enabling/disabling the shift, but this design uses CXXRTL for simulation, which currently doesn't support gated clocks. In practice we lose 10 cycles per load and 12 cycles per store by making GPRs/PC completely uncontrolled.*)
+> *This means we use the simplest possible D flip-flops for our shift registers, instead of relying on scan flops for direction control, or enable flops for shift enable control. Clock gates are a low-area alternative for enabling/disabling the shift, but this design uses CXXRTL for simulation, which currently doesn't support gated clocks. In practice we lose 10 cycles per load and 12 cycles per store by making GPRs/PC completely uncontrolled.*
 
 Non-architectural registers should be kept to a minimum: we probably do need a current instruction register, and a dedicated address register that can shift in two directions (LSB-first for serial-addition, then MSB-first to issue an address to the SPI) is just about worth it if it lets us make the GPRs and PC shift unidirectionally.
 
@@ -50,7 +50,7 @@ Instructions are three-address-code, because we can afford the encoding space, a
 
 Register index r6 for the destination or first operand indicates a hardwired zero register. Using a zero register as the destination allows flags to be set without clobbering any registers, and there are some useful pseudo-ops with zero for the first operand. For the *second* operand, index r6 indicates a 16-bit literal following the instruction.
 
-> Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.
+> *Of course there is nothing stopping you from executing your literals as instructions on different code paths, for bonus style points.*
 
 ## Instructions
 
@@ -63,9 +63,9 @@ The format of an instruction is:
 | rd  | rs  | rt  | condition | major opcode |
 ```
 
-> The major opcode is the LSBs, so we have a chance to get a head start on the decode
+> *The major opcode is the LSBs, so we have a chance to get a head start on the decode*
 
-> rt can't be on the far left because the processor needs to decode it before the instruction is completely fetched, to decide whether to issue more clocks for the immediate
+> *rt can't be on the far left because the processor needs to decode it before the instruction is completely fetched, to decide whether to issue more clocks for the immediate*
 
 Of the 16 major opcodes, 15 are currently allocated:
 
@@ -102,9 +102,9 @@ Any instruction that writes to PC is effectively a jump instruction. After writi
 * Cycles 48 through 62: The address register shifts in reverse. Because the first PC bit already went to the bus last cycle, the *second flop* of the address register is forwarded to the bus. The last address bit is issued on cycle 62.
 * Cycle 63: idle cycle to account for round trip time of SPI signals
 
-> The oddity of issuing the first address bit one cycle early, and then having to tap the second flop of the address register, is because the address register also needs to issue write addresses, which have different timing, because the write address directly abuts the write data on the SPI bus. This, plus the inflexibility of our 16-cycle register rotation, causes read addresses to have slightly odd timing.
+> *The oddity of issuing the first address bit one cycle early, and then having to tap the second flop of the address register, is because the address register also needs to issue write addresses, which have different timing, because the write address directly abuts the write data on the SPI bus. This, plus the inflexibility of our 16-cycle register rotation, causes read addresses to have slightly odd timing.*
 
-> There are a few wasted cycles between cycle 32 and 47, and this is again due to our fixed 16-cycle rotation of the GPRs and PC.
+> *There are a few wasted cycles between cycle 32 and 47, and this is again due to our fixed 16-cycle rotation of the GPRs and PC.*
 
 A branch is any jump instruction with a condition code other than `al` or `pr`. If the condition is true, it will execute as a jump instruction, and if the condition is false, the instruction is skipped.
 
@@ -152,7 +152,7 @@ Load/store instructions move data between memory and the register file. This is 
 
 Addresses are issued to the SPI SRAM in MSB-first order, but we generally read the register file LSB-first so that we can propagate carries serially. If nonsequential accesses were fast, we could just accept a scramble of the address bits, but we are leaning heavily on fast sequential SPI transfers, so our addresses need to be genuinely sequential. We solve this with a dedicated address register, capable of shifting in both directions. First a register is read from the register file into the address register, optionally adding another register or an immediate as the data passes through the ALU. The address register captures this and then replays it in reverse.
 
-> Earlier versions of the design were instead able to reverse the shift direction of the register file and program counter. The lack of dedicated address register meant address addition had to be performed in-place in the source register, then reverted by subtraction. It was impossible to reload the immediate for subtraction if PC was used as the base address, or if the load was into PC. Replacing the scan flops in PC/GPRs with simple DFFs just about pays for the cost of a dedicated address register.
+> *Earlier versions of the design were instead able to reverse the shift direction of the register file and program counter. The lack of dedicated address register meant address addition had to be performed in-place in the source register, then reverted by subtraction. It was impossible to reload the immediate for subtraction if PC was used as the base address, or if the load was into PC. Replacing the scan flops in PC/GPRs with simple DFFs just about pays for the cost of a dedicated address register.*
 
 The address register captures either the sum of the two operands, or just the first operand. There is also an option to write back the sum to the first operand register. This supports the following four cases:
 
@@ -162,6 +162,8 @@ The address register captures either the sum of the two operands, or just the fi
 | First operand   | Sum of operands   | `ldia`/`stia` | Load/store with post-increment/decrement, e.g. stack pop             |
 | Sum of operands | None              | `ld2`/`st2`   | Load/store addressed by register + register, or register + immediate |
 | Sum of operands | Sum of operands   | `ldib`/`stib` | Load/store with pre-increment/decrement, e.g. stack push             |
+
+If the same register is used for both address writeback and store data, the address writeback is visible to the store data.
 
 The actual cost of a load/store is 96 cycles: the command + address sections are rounded up to 32 cycles to keep up with our fixed 16-cycle register rotation. The LSB-first register read and address addition can be done concurrently with the issue of the SPI command, so there is no additional penalty for these, *unless* the second operand is an immediate, in which case this can not be overlapped and there is an additional cost of 16 cycles.
 

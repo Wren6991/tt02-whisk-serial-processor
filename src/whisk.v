@@ -676,7 +676,7 @@ assign mem_sdo_next =
 	state == S_PC_NONSEQ1 ? mem_spi_addr                                 :
 	issue_ls_addr_ph0     ? mem_sdo_ls_addr_ph0                          :
 	state == S_LS_ADDR1   ? mem_spi_addr                                 :
-	state == S_LS_DATA    ? reg_rd_qr                                    : 1'b0;
+	state == S_LS_DATA    ? (instr_rd == 3'd7 ? pc_qr : reg_rd_qr)       : 1'b0;
 
 // ----------------------------------------------------------------------------
 // IO port
