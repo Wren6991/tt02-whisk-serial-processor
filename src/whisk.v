@@ -451,7 +451,6 @@ wire alu_result;
 
 wire writeback_wen =
 	state == S_EXEC && !(instr_op_ls && !instr_op_ls_sumr)  ||
-	state == S_LS_ADDR0 && instr_op_ls_sumr ||
 	state == S_LS_DATA && !instr_op_st_nld;
 
 wire writeback_data = alu_result;
@@ -582,15 +581,12 @@ reg flag_z;
 reg flag_c;
 reg flag_n;
 
-wire update_flag_zn = (state == S_EXEC || state == S_LS_DATA) && ~|instr_cond;
-wire update_flag_c = update_flag_zn && state == S_EXEC;
+wire update_flags = (state == S_EXEC || state == S_LS_DATA) && ~|instr_cond;
 
 always @ (posedge clk) begin
-	if (update_flag_zn) begin
+	if (update_flags) begin
 		flag_z <= (flag_z || ~|bit_ctr) && !alu_result;
 		flag_n <= alu_result;
-	end
-	if (update_flag_c) begin
 		flag_c <= alu_co;
 	end
 end

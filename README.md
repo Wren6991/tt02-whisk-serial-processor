@@ -139,10 +139,6 @@ three flags: N Z C (Negative, Zero, Carry). The carry is a true carry flag
 * `110: zs`: Execute if zero
 * `111: zc`: Execute if nonzero
 
-(TODO: there are probably more useful combinations here, for signed comparisons etc, and not clear we can get away without a V flag. We can use double branches to test combinations, but equally we could use branch-over-jump to invert flags.)
-
-(TODO: what value does each instruction write to the flags, for non-obvious cases)
-
 Instructions with condition codes other than `al` do not update flags.
 
 If a condition code is false, an instruction has no effect other than incrementing PC. The following immediate operand is still consumed, if there is one.
@@ -160,9 +156,10 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 * ADD/SUB carry into `C` from the sum (*not* a borrow)
 * AND/ANDN/OR set `C` if and only if the result is all-ones
 * SLL/SRL/SRA set `C` to the bit shifted out of the register
-* Loads/stores carry into `C` from the sum of the two address operands, *even if the sum is not used for the actual load/store address*
+* Loads set `C` to bit 7 of the load data
+* Stores set `C` to an unknown value
 
-(TODO should loads set the carry flag to bit 7?)
+> *I originally intended to make loads set `C` to bit 7 to speed up software emulation of sign-extending byte loads: lh rs, rt; or.cs rs, rs, #0xff00. When I added instructions for byte loads, this became unnecessary, but because I used the ALU carry flop to propagate the sign up from bit 7, it fell out naturally that all loads set `C` to 7.*
 
 #### Signed Comparisons
 
@@ -243,6 +240,8 @@ Some dubious operations that nevertheless exist:
 vec label     -> lhib pc, pc, @label   // Vector through a function pointer stored at some label
 trace rs      -> shia pc, rs, #2       // Record program counter to buffer
 leap          -> sll pc, pc            // Jump to twice the current instruction address, plus 4
+ff8a          -> ld pc, pc, #-2        // Jump to address 0xff8a
+
 ```
 
 ### Execution Timings
