@@ -10,7 +10,7 @@ view: run
 
 tmp/%.bin: ../asm/%.S
 	mkdir -p tmp
-	../whiskasm $< $@ --dis $@.dis
+	../tools/whiskasm $< $@ --dis $@.dis
 
 $(TBDIR)/tb: ../../src/whisk.v $(TBDIR)/tb.cpp
 	make -C $(TBDIR) tb

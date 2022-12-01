@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+
+# Quick and dirty ISA simulator for Whisk
+
+import argparse
+import sys
+from whisk_asm_const import *
+
+
+class WhiskCPU:
+
+	REG_WIDTH = 16
+	REG_MASK = (1 << 16) - 1
+
+	def __init__(self):
+		self.r = [0] * 6
+		self.pc = 0
+		self.mem = [0] * (1 << self.REG_WIDTH)
+		self.z = False
+		self.c = False
+		self.n = False
+
+	def step(self):
+		instr = self.mem[self.pc] | (self.mem[(self.pc + 1) & self.REG_MASK] << 8)
+		# print(f"{self.pc:04x}: {instr:04x}")
+
+		instr_opc  = (instr & INSTR_OPC_MASK ) >> INSTR_OPC_LSB
+		instr_cond = (instr & INSTR_COND_MASK) >> INSTR_COND_LSB
+		instr_rt   = (instr & INSTR_RT_MASK  ) >> INSTR_RT_LSB
+		instr_rs   = (instr & INSTR_RS_MASK  ) >> INSTR_RS_LSB
+		instr_rd   = (instr & INSTR_RD_MASK  ) >> INSTR_RD_LSB
+
+		have_imm_operand = instr_rt == 6
+		condition_true = [
+			True ,  True,
+			self.n, not self.n,
+			self.c, not self.c,
+			self.z, not self.z
+		][instr_cond]
+
+		# "No side effect other than incrementing PC"
+		if not condition_true:
+			self.pc = (self.pc + (4 if have_imm_operand else 2)) & self.REG_MASK
+			return
+
+		# Reading PC is defined as "instruction address plus 2", so increment now.
+		self.pc = (self.pc + 2) & self.REG_MASK
+
+		imm_data = self.mem[self.pc] | (self.mem[(self.pc + 1) & self.REG_MASK] << 8)
+
+		operand_d = (self.r + [0,        self.pc])[instr_rd]
+		operand_s = (self.r + [0,        self.pc])[instr_rs]
+		operand_t = (self.r + [imm_data, self.pc])[instr_rt]
+
+		writeback_data = None
+		out_data = None
+
+		if instr_opc & OP_MASK_LDST:
+			addr_sum = (operand_s + operand_t) & self.REG_MASK
+			addr = addr_sum if (instr_opc & OP_MASK_LDST_AA) else operand_s
+			# Carry is the carry-out of the address addition, always
+			self.c = addr_sum != operand_s + operand_t
+			# Address writeback is visible to the store data, so do it first.
+			if instr_opc & OP_MASK_LDST_AR:
+				if instr_rs < 6:
+					self.regs[instr_rs] = addr_sum
+				elif instr_rs == 7:
+					self.pc = addr_sum
+			if instr_opc & OP_MASK_ST:
+				self.mem[addr] = operand_d & 0xff
+				self.mem[(addr + 1) & self.REG_MASK] = (operand_d >> 8) & 0xff
+			else:
+				writeback_data = self.mem[addr] | (self.mem[(addr + 1) & self.REG_MASK] << 8)
+		elif instr_opc == OPC_ADD:
+			writeback_data = (operand_s + operand_t) & self.REG_MASK
+			self.c = writeback_data != operand_s + operand_t
+		elif instr_opc == OPC_SUB:
+			writeback_data = (operand_s - operand_t) & self.REG_MASK
+			self.c = operand_s >= operand_t
+		elif instr_opc == OPC_AND:
+			writeback_data = operand_s & operand_t
+			self.c = writeback_data == self.REG_MASK
+		elif instr_opc == OPC_ANDN:
+			writeback_data = ~operand_s & operand_t
+			self.c = writeback_data == self.REG_MASK
+		elif instr_opc == OPC_OR:
+			writeback_data = operand_s | operand_t
+			self.c = writeback_data == self.REG_MASK
+		elif instr_opc == OPC_SHIFT:
+			if instr_rt == OPC2_SRL:
+				writeback_data = operand_s >> 1
+				self.c = (operand_s & 1) != 0
+			elif instr_rt == OPC2_SRA:
+				writeback_data = (operand_s >> 1) | (operand_s & 0x8000)
+				self.c = (operand_s & 1) != 0
+			elif instr_rt == OPC2_SLL:
+				writeback_data = operand_s << 1
+				self.c = (operand_s & 0x8000) != 0
+			else:
+				# Undefined
+				writeback_data = 0xeeee
+				self.c = False
+		elif instr_opc == OPC_INOUT:
+			if instr_rs == OPC2_IN:
+				# TODO: IN
+				writeback_data = 0xdead
+				self.c = False
+			elif instr_rs == OPC2_OUT:
+				# TODO: IN (OUT can also write back some IN data in some form)
+				writeback_data = 0xdead
+				self.c = False
+				out_data = operand_t
+				self.c = ((operand_s + operand_t) & (1 << self.REG_WIDTH)) != 0 # I think
+			else:
+				# Undefined
+				writeback_data = 0xeeee
+				self.c = False
+		else:
+			# Undefined
+			writeback_data = 0xeeee
+			self.c = False
+
+		if have_imm_operand and instr_rd != 7:
+			self.pc = (self.pc + 2) & self.REG_MASK
+
+		if instr_rd == 7:
+			self.pc = writeback_data
+		elif instr_rd < 6:
+			self.r[instr_rd] = writeback_data
+		self.z = writeback_data == 0
+		self.n = (writeback_data & 0x8000) != 0
+
+		return out_data
+
+
+def bitrev(x, n):
+	accum = 0
+	for i in range(n):
+		accum = (accum << 1) | (x & 1)
+		x = x >> 1
+	return accum
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+	parser.add_argument("bin", help="Binary program loaded to address 0")
+	parser.add_argument("--cycles", type=int, help="Maximum number of cycles to run before exiting")
+	args = parser.parse_args()
+
+	cpu = WhiskCPU()
+	for i, x in enumerate(open(args.bin, "rb").read()):
+		cpu.mem[i] = bitrev(x, 8)
+
+	out_history = []
+	cycles = args.cycles if args.cycles is not None else 1000 * 1000 * 1000
+	for i in range(cycles):
+		out_data = cpu.step()
+		if out_data is not None:
+			print(f"OUT: {out_data:04x}")
+			out_history.append(out_data)
+			if len(out_history) > 3:
+				del out_history[0]
+			if len(out_history) >= 3 and out_history[0] == 0x7357 and out_history[1] == 0xdead:
+				print(f"CPU requested halt. Exit code {out_history[2]}")
+				break
+
+
+

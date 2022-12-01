@@ -321,7 +321,7 @@ int main(int argc, char **argv) {
 
 		if (io.exitcode_valid) {
 			printf("CPU requested halt. Exit code %d\n", io.exitcode);
-			printf("Ran for %ld cycles\n", cycle + 1);
+			// printf("Ran for %ld cycles\n", cycle + 1); causes problems with whisksim diff
 			break;
 		}
 		if (cycle + 1 == max_cycles) {

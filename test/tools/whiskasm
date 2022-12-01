@@ -1,37 +1,12 @@
 #!/usr/bin/env python3
 
+# Quick and dirty assembler for Whisk, written pre-tapeout
+# Supports "disassembly" (actually just annotates the assembly)
+
 import argparse
 import re
 import sys
-
-OPC_ADD                = 0x0
-OPC_SUB                = 0x1
-OPC_AND                = 0x2
-OPC_ANDN               = 0x3
-OPC_OR                 = 0x4
-OPC_SHIFT              = 0x5
-OPC_INOUT              = 0x6
-OPC_LDR                = 0x8
-OPC_LDR_PREINC         = 0x9
-OPC_LDR_POSTDEC        = 0xa
-OPC_LDR_PREINC_POSTDEC = 0xb
-OPC_STR                = 0xc
-OPC_STR_PREINC         = 0xd
-OPC_STR_POSTDEC        = 0xe
-OPC_STR_PREINC_POSTDEC = 0xf
-
-OPC2_SRL               = 0x0
-OPC2_SRA               = 0x1
-OPC2_SLL               = 0x4
-
-OPC2_IN                = 0x0
-OPC2_OUT               = 0x4
-
-INSTR_OPC_LSB          = 0
-INSTR_COND_LSB         = 4
-INSTR_RT_LSB           = 7
-INSTR_RS_LSB           = 10
-INSTR_RD_LSB           = 13
+from whisk_asm_const import *
 
 # Records of the form: (opcode, expect rd, expect rs, expect rt)
 INSTR = {
@@ -41,15 +16,15 @@ INSTR = {
 	"and":    (OPC_AND,                                                      True,  True,  True ),
 	"andn":   (OPC_ANDN,                                                     True,  True,  True ),
 	"or":     (OPC_OR,                                                       True,  True,  True ),
-	"ldib":   (OPC_LDR_PREINC,                                               True,  True,  True ),
-	"ldda":   (OPC_LDR_POSTDEC,                                              True,  True,  True ),
-	"ldibda": (OPC_LDR_PREINC_POSTDEC,                                       True,  True,  True ),
-	"stib":   (OPC_STR_PREINC,                                               True,  True,  True ),
-	"stda":   (OPC_STR_POSTDEC,                                              True,  True,  True ),
-	"stibda": (OPC_STR_PREINC_POSTDEC,                                       True,  True,  True ),
+	"ldia":   (OPC_LDIA,                                                     True,  True,  True ),
+	"ld2":    (OPC_LD2,                                                      True,  True,  True ),
+	"ldib":   (OPC_LDIB,                                                     True,  True,  True ),
+	"stib":   (OPC_STIA,                                                     True,  True,  True ),
+	"st2":    (OPC_ST2,                                                      True,  True,  True ),
+	"stib": (OPC_STIB,                                                     True,  True,  True ),
 	# Single-operand with no minor opcode
-	"ld":     (OPC_LDR,                                                      True,  True,  False),
-	"st":     (OPC_STR,                                                      True,  True,  False),
+	"ld":     (OPC_LD,                                                       True,  True,  False),
+	"st":     (OPC_ST,                                                       True,  True,  False),
 	# Single-operand with minor opcode in rt
 	"sll":    (OPC_SHIFT | (OPC2_SLL << INSTR_RT_LSB),                       True,  True,  False),
 	"sra":    (OPC_SHIFT | (OPC2_SRA << INSTR_RT_LSB),                       True,  True,  False),
