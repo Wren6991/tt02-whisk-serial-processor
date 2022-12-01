@@ -1,4 +1,4 @@
-// Cover 4 main variants of load instructions
+// Cover 3 variants of load halfword
 
 entry:
 	mov pc, #4

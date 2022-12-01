@@ -35,7 +35,7 @@ INSTR = {
 	# Single-reg memory, minor in rt
 	"lb":     (OPC_LB | (OPC2_LB << INSTR_RT_LSB),                           1, 1, 0, 0),
 	"lbs":    (OPC_LB | (OPC2_LBS << INSTR_RT_LSB),                          1, 1, 0, 0),
-	"sb":     (OPC_LB | (OPC2_LBS << INSTR_RT_LSB),                          1, 1, 0, 0),
+	"sb":     (OPC_SB,                                                       1, 1, 0, 0),
 	# Pseudo-ops which don't need macros
 	"mov":    (OPC_ADD  | (6 << INSTR_RS_LSB),                               1, 0, 1, 0),
 	"not":    (OPC_ANDN | (6 << INSTR_RS_LSB),                               1, 0, 1, 0),

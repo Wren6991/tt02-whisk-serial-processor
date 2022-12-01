@@ -454,7 +454,7 @@ wire writeback_wen =
 	state == S_LS_ADDR0 && instr_op_ls_sumr ||
 	state == S_LS_DATA && !instr_op_st_nld;
 
-wire writeback_data = state == S_LS_DATA ? mem_sdi_prev : alu_result;
+wire writeback_data = alu_result;
 
 wire [INSTR_RD_MSB-INSTR_RD_LSB:0] writeback_reg =
 	instr_op_ls && state != S_LS_DATA ? instr_rs : instr_rd;
@@ -549,8 +549,18 @@ wire [1:0] alu_shift_r = {
 // Carry is an all-ones flag for bitwise ops
 wire bit_co = alu_result && (alu_ci || ~|bit_ctr);
 
+// Byte loads must be zero- or sign-extended. Use the carry to
+// propagate the sign.
+wire instr_op_ls_byte = !(instr_op_ls_sumr || instr_op_ls_suma);
+wire instr_op_ls_sbyte = instr_rt[2];
+
+wire [1:0] alu_load =
+	!(bit_ctr[3] && instr_op_ls_byte) ? {2{mem_sdi_prev}} :
+	instr_op_ls_sbyte                 ? {2{alu_ci}}       : {alu_ci, 1'b0};
+
 wire alu_co;
 assign {alu_co, alu_result} =
+	state == S_LS_DATA                   ? alu_load                        :
 	instr_op_ls                          ? alu_add                         :
 	instr_op == OP_ADD                   ? alu_add                         :
 	instr_op == OP_SUB                   ? alu_sub                         :
@@ -651,11 +661,19 @@ assign mem_csn_next = bit_ctr < spi_cmd_start_cycle && (
 
 // Pedal to the metal on SCK except when pulling CSn for a nonsequential
 // access, or when executing an unskipped instruction without immediate or
-// early address issue.
+// early address issue. (Also mask for second half of byte accesses.)
 
-assign mem_sck_en_next = !mem_csn_next && !(
+wire mem_sck_disable_on_imm =
 	state == (&bit_ctr[3:1] ? S_FETCH : S_EXEC) && instr_cond_true &&
-	!(instr_has_imm_operand || issue_ls_addr_ph0)
+	!(instr_has_imm_operand || issue_ls_addr_ph0);
+
+wire mem_sck_disable_on_byte_ls =
+	state == S_LS_DATA && instr_op_ls_byte && bit_ctr[3];
+
+assign mem_sck_en_next = !(
+	mem_csn_next ||
+	mem_sck_disable_on_imm ||
+	mem_sck_disable_on_byte_ls
 );
 
 // Store address replays entirely in LS_ADDR1, but load/fetch extend one cycle

@@ -1,30 +1,17 @@
-// Cover 3 variants of store halfword
+// Test byte store (minimally!)
 
 entry:
 	mov pc, #4
 
+	// Even address
 	add r0, pc, @test_data
-	mov r1, #1
-	sh r1, r0
+	mov r1, #0xa5
+	sb r1, r0
 
-	mov r1, #2
-	shib r1, r0, #2
-
-	add r3, r0, #2
-	mov r4, #3
-	shia r4, r3, #2
-
-	// Check increment-after took place
-	mov r5, #4
-	sh r5, r3
-
-	mov r0, #5
-	sh r0, r3, #2
-
-	// Negative displacement
-	add r3, r3, #6
-	mov r1, #6
-	sh r1, r3, #-2
+	// Odd address
+	add r0, r0, #5
+	mov r1, #0xa5
+	sb r1, r0
 
 	// Read out memory into IO port
 	add r0, pc, @test_data
