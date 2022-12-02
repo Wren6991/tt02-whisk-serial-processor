@@ -104,6 +104,9 @@ class WhiskCPU:
 			elif instr_rt == OPC2_SRA:
 				writeback_data = (operand_s >> 1) | (operand_s & 0x8000)
 				if instr_cond == 0: self.c = (operand_s & 1) != 0
+			elif instr_rt == OPC2_ROR:
+				writeback_data = (operand_s >> 1) | ((operand_s & 0x1) << 15)
+				if instr_cond == 0: self.c = (operand_s & 1) != 0
 			elif instr_rt == OPC2_SLL:
 				writeback_data = (operand_s << 1) & self.REG_MASK
 				if instr_cond == 0: self.c = (operand_s & 0x8000) != 0

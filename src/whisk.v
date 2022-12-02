@@ -279,6 +279,7 @@ localparam [3:0] OP_SH_IB       = 4'hf; // mem[rs + rt] = rd; rs += rt;
 // Minor opcodes (rt)
 localparam [2:0] OP2_SRL        = 3'h0;
 localparam [2:0] OP2_SRA        = 3'h1;
+localparam [2:0] OP2_ROR        = 3'h2;
 localparam [2:0] OP2_SLL        = 3'h4;
 
 // Minor opcodes (rs)
@@ -558,9 +559,14 @@ wire [1:0] alu_shift_l = {
 	|alu_ci && |bit_ctr
 };
 
+// Rotate uses the carry to remember prior LSB and insert it at MSB.
+// (Convenient because prior LSB is already the carry flag.)
+wire alu_shift_r_last_bit =
+	instr_rt[1] ? alu_ci : alu_op_s && instr_rt[0];
+
 wire [1:0] alu_shift_r = {
 	|bit_ctr ? alu_ci                  : alu_op_s,
-	&bit_ctr ? alu_op_s && instr_rt[0] : alu_op_s_next
+	&bit_ctr ? alu_shift_r_last_bit    : alu_op_s_next
 };
 
 // Carry is an all-ones flag for bitwise ops

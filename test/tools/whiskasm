@@ -20,6 +20,7 @@ INSTR = {
 	"sll":    (OPC_SHIFT | (OPC2_SLL << INSTR_RT_LSB),                       1, 1, 0, 0),
 	"sra":    (OPC_SHIFT | (OPC2_SRA << INSTR_RT_LSB),                       1, 1, 0, 0),
 	"srl":    (OPC_SHIFT | (OPC2_SRL << INSTR_RT_LSB),                       1, 1, 0, 0),
+	"ror":    (OPC_SHIFT | (OPC2_ROR << INSTR_RT_LSB),                       1, 1, 0, 0),
 	# One reg with minor opcode in rs
 	"in":     (OPC_INOUT | (OPC2_IN  << INSTR_RS_LSB) | (6 << INSTR_RT_LSB), 1, 0, 0, 0),
 	"out":    (OPC_INOUT | (OPC2_OUT << INSTR_RS_LSB) | (6 << INSTR_RD_LSB), 0, 0, 1, 0),

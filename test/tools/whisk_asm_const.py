@@ -16,6 +16,7 @@ OPC_SHIB         = 0xf
 
 OPC2_SRL         = 0x0
 OPC2_SRA         = 0x1
+OPC2_ROR         = 0x2
 OPC2_SLL         = 0x4
 
 OPC2_IN          = 0x0
