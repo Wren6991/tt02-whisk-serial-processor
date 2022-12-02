@@ -92,7 +92,7 @@ class WhiskCPU:
 			writeback_data = operand_s & operand_t
 			if instr_cond == 0: self.c = writeback_data == self.REG_MASK
 		elif instr_opc == OPC_ANDN:
-			writeback_data = ~operand_s & operand_t
+			writeback_data = operand_s & ~operand_t
 			if instr_cond == 0: self.c = writeback_data == self.REG_MASK
 		elif instr_opc == OPC_OR:
 			writeback_data = operand_s | operand_t

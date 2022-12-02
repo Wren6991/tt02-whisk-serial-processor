@@ -252,11 +252,11 @@ localparam       INSTR_RD_LSB   = 13;
 localparam       INSTR_RD_MSB   = 15;
 
 // Major opcodes (instr[3:0])
-localparam [3:0] OP_ADD         = 4'h0; // rd =  rs + rt
-localparam [3:0] OP_SUB         = 4'h1; // rd =  rs - rt
-localparam [3:0] OP_AND         = 4'h2; // rd =  rs & rt
-localparam [3:0] OP_ANDN        = 4'h3; // rd = ~rs & rt
-localparam [3:0] OP_OR          = 4'h4; // rd =  rs | rt
+localparam [3:0] OP_ADD         = 4'h0; // rd = rs +  rt
+localparam [3:0] OP_SUB         = 4'h1; // rd = rs -  rt
+localparam [3:0] OP_AND         = 4'h2; // rd = rs &  rt
+localparam [3:0] OP_ANDN        = 4'h3; // rd = rs & ~rt
+localparam [3:0] OP_OR          = 4'h4; // rd = rs |  rt
 localparam [3:0] OP_SHIFT       = 4'h5; // Minor opcode in rt
 localparam [3:0] OP_INOUT       = 4'h6; // Minor opcode in rs
 
@@ -576,9 +576,9 @@ assign {alu_co, alu_result} =
 	instr_op_ls                          ? alu_add                         :
 	instr_op == OP_ADD                   ? alu_add                         :
 	instr_op == OP_SUB                   ? alu_sub                         :
-	instr_op == OP_AND                   ? {bit_co,  alu_op_s && alu_op_t} :
-	instr_op == OP_ANDN                  ? {bit_co, !alu_op_s && alu_op_t} :
-	instr_op == OP_OR                    ? {bit_co,  alu_op_s || alu_op_t} :
+	instr_op == OP_AND                   ? {bit_co, alu_op_s &&  alu_op_t} :
+	instr_op == OP_ANDN                  ? {bit_co, alu_op_s && !alu_op_t} :
+	instr_op == OP_OR                    ? {bit_co, alu_op_s ||  alu_op_t} :
 	instr_op == OP_SHIFT &&  instr_rt[2] ? alu_shift_l                     :
 	instr_op == OP_SHIFT && !instr_rt[2] ? alu_shift_r                     :
 	instr_op == OP_INOUT                 ? ioport_sdi_prev                 : alu_add;
@@ -1148,43 +1148,7 @@ assign padout_sck = sck_en_r && !clk;
 // ----------------------------------------------------------------------------
 // Input paths
 
-// FIXME this is actually different from SPI, right? Probably transitions on
-// posedge? Need to find some actual datasheets for candidate shift
-// registers.
-
-`ifdef WHISK_CELLS_SKY130
-
-// ASIC version
-
-// TODO find a suitable delay buffer cell for hold buffering, and decide how to
-// dimension it against i[7:0] skew
-
-// TODO find a suitable latch cell (possibly sky130_fd_sc_hd__dlxtp)
-
-wire padin_sdi_delay = padin_sdi;
-
-reg sdi_latch;
-
-always @ (*) begin
-	if (clk) begin
-		sdi_latch <= padin_sdi_delay;
-	end
-end
-
-assign sdi = sdi_latch;
-
-`else
-
-// Dodgy sim-only version
-
-reg padin_sdi_reg;
-always @ (negedge clk) begin
-	padin_sdi_reg <= padin_sdi;
-end
-
-assign sdi = padin_sdi_reg;
-
-`endif
+assign sdi = padin_sdi;
 
 endmodule
 
