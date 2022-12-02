@@ -1065,8 +1065,6 @@ sky130_fd_sc_hd__dlymetal6s6s_1 delbuf[3:0] (
 assign padin_sdi_delay = padin_sdi;
 `endif
 
-wire padin_sdi_delay = padin_sdi;
-
 reg sdi_latch;
 
 always @ (*) begin
