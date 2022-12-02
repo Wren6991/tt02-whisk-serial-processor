@@ -56,6 +56,9 @@ assign io_out[0] = io_mem_csn;
 assign io_out[1] = io_mem_sck;
 assign io_out[2] = io_mem_sdo;
 
+wire       io_retime_mem_out = io_in[4];
+wire [1:0] io_retime_mem_in  = io_in[6:5];
+
 // IO port (shift register interface)
 wire io_ioport_sdi = io_in[3];
 
@@ -81,6 +84,9 @@ whisk_top top_u (
 	.io_mem_sck        (io_mem_sck),
 	.io_mem_sdo        (io_mem_sdo),
 
+	.io_retime_mem_out (io_retime_mem_out),
+	.io_retime_mem_in  (io_retime_mem_in),
+
 	.io_ioport_sdi     (io_ioport_sdi),
 	.io_ioport_sck     (io_ioport_sck),
 	.io_ioport_sdo     (io_ioport_sdo),
@@ -96,19 +102,22 @@ endmodule
 // ============================================================================
 
 module whisk_top (
-	input  wire io_clk,
-	input  wire io_rst_n,
+	input  wire       io_clk,
+	input  wire       io_rst_n,
 
-	input  wire io_mem_sdi,
-	output wire io_mem_csn,
-	output wire io_mem_sck,
-	output wire io_mem_sdo,
+	input  wire       io_mem_sdi,
+	output wire       io_mem_csn,
+	output wire       io_mem_sck,
+	output wire       io_mem_sdo,
 
-	input  wire io_ioport_sdi,
-	output wire io_ioport_sck,
-	output wire io_ioport_sdo,
-	output wire io_ioport_latch_i,
-	output wire io_ioport_latch_o
+	input  wire       io_retime_mem_out,
+	input  wire [1:0] io_retime_mem_in,
+
+	input  wire       io_ioport_sdi,
+	output wire       io_ioport_sck,
+	output wire       io_ioport_sdo,
+	output wire       io_ioport_latch_i,
+	output wire       io_ioport_latch_o
 );
 
 // ----------------------------------------------------------------------------
@@ -163,18 +172,21 @@ whisk_cpu cpu (
 // Serdes (IO registers)
 
 whisk_spi_serdes mem_serdes_u (
-	.clk        (clk),
-	.rst_n      (rst_n),
+	.clk                  (clk),
+	.rst_n                (rst_n),
 
-	.sdo        (mem_sdo_next),
-	.sck_en     (mem_sck_en_next),
-	.csn        (mem_csn_next),
-	.sdi        (mem_sdi_prev),
+	.sdo                  (mem_sdo_next),
+	.sck_en               (mem_sck_en_next),
+	.csn                  (mem_csn_next),
+	.sdi                  (mem_sdi_prev),
 
-	.padout_sck (io_mem_sck),
-	.padout_csn (io_mem_csn),
-	.padout_sdo (io_mem_sdo),
-	.padin_sdi  (io_mem_sdi)
+	.padout_sck           (io_mem_sck),
+	.padout_csn           (io_mem_csn),
+	.padout_sdo           (io_mem_sdo),
+	.padin_sdi            (io_mem_sdi),
+
+	.padin_retime_mem_out (io_retime_mem_out),
+	.padin_retime_mem_in  (io_retime_mem_in),
 );
 
 whisk_ioport_serdes io_serdes_u (
@@ -930,104 +942,128 @@ assign q = q_r;
 endmodule
 
 // ============================================================================
-// Module whisk_flop_en: a flop with an input enable (DFFE). For some reason
-// these are not mapped automatically, so we get a DFF, a mux and two buffers
-// ============================================================================
-
-module whisk_flop_en (
-	input  wire clk,
-	input  wire d,
-	input  wire e,
-	output wire q
-);
-
-`ifdef WHISK_CELLS_SKY130
-
-sky130_fd_sc_hd__edfxtp_1 dffe_u (
-	.CLK        (clk),
-	.D          (d),
-	.DE         (e),
-	.Q          (q),
-	.VPWR       (1'b1),
-	.VGND       (1'b0)
-);
-
-`else
-
-// Synthesisable model
-
-reg q_r;
-always @ (posedge clk) begin
-	if (e) begin
-		q_r <= d;
-	end
-end
-
-assign q = q_r;
-
-`endif
-
-endmodule
-// ============================================================================
 // Module whisk_spi_serdes: handle the timing of the SPI interface, and
-// provide a slightly abstracted interface to the whisk core, with all
-// signals on posedge of clk.
+// provide a slightly abstracted interface to the Whisk core
 // ============================================================================
+
+// Note the assumption in the core is that if it asserts the last address bit
+// by the end of cycle k then it can sample the first data bit at the end of
+// cycle k + 2.
+//
+// - clk posedge k: outputs are registered and go straight into scan chain
+// - clk negedge k: SCK rising edge for last address bit is launched into scan chain
+// - clk posedge k + 1: SCK falling edge following last address bit is launched into scan chain
+// - clk negedge k + 1: sample taken at falling SCK edge comes back through scan
+// - clk posedge k + 2: sample taken at SCK rising edge comes back through scan
+//
+// Unfortunately the sample coming back is not meaningfully constrained with
+// respect to clk, so we have some options to shmoo things around. The winner
+// is probably to launch our outputs a half cycle earlier (on the negedge) so
+// that the input is stable at the point the core samples it on its posedge.
+// This creates a half cycle path in the core, but the clock period is long
+// so we don't care. This is the default.
+//
+// Note without the scan problems the core's assumption about delay would be a
+// reasonable one.
 
 module whisk_spi_serdes(
-	input  wire clk,
-	input  wire rst_n,
+	input  wire       clk,
+	input  wire       rst_n,
 
 	// Core
-	input  wire sdo,
-	input  wire sck_en,
-	input  wire csn,
-	output wire sdi,
+	input  wire       sdo,
+	input  wire       sck_en,
+	input  wire       csn,
+	output wire       sdi,
 
 	// IOs
-	output wire padout_sck,
-	output wire padout_csn,
-	output wire padout_sdo,
-	input  wire padin_sdi
+	output wire       padout_sck,
+	output wire       padout_csn,
+	output wire       padout_sdo,
+	input  wire       padin_sdi,
+
+	input  wire       padin_retime_mem_out,
+	input  wire [1:0] padin_retime_mem_in
 );
 
 // ----------------------------------------------------------------------------
 // Output paths
 
-reg sdo_r;
-reg sck_en_r;
-reg csn_r;
+// There are multiple through-paths from the clock input to SPI outputs
+// (*mostly* via DFF CK-to-Q) and these should fully settle between the scan
+// input latches going transparent, and the outputs being registered back out
+// into the scan chain. We can't add IO constraints, but there are plenty of
+// wait states in the scan chain driver around this point. Hopefully on TT3
+// the scan chain stuff will go away and we can build a normal SPI
+// interface.
+
+reg sdo_pos_r;
+reg sck_en_pos_r;
+reg csn_pos_r;
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
-		sdo_r <= 1'b0;
-		csn_r <= 1'b1;
-		sck_en_r <= 1'b0;
+		sdo_pos_r <= 1'b0;
+		sck_en_pos_r <= 1'b1;
+		csn_pos_r <= 1'b0;
 	end else begin
-		sdo_r <= sdo;
-		csn_r <= csn;
-		sck_en_r <= sck_en;
+		sdo_pos_r <= sdo;
+		sck_en_pos_r <= csn;
+		csn_pos_r <= sck_en;
 	end
 end
 
-assign padout_sdo = sdo_r;
-assign padout_csn = csn_r;
+// Through-path for clock input to SCK output. This *will* glitch, but gating
+// cell not required for TT2, as this signal is sampled by the scan flops at
+// the tile output.
+wire padout_sck_p = sck_en_pos_r && !clk;
 
-// Through-path for clock input to SCK output. TODO clock gating cell
-// required? This is sampled by the scan flops at the tile output.
-assign padout_sck = sck_en_r && !clk;
+// Very dirty option to advance all outputs by a half cycle.
+
+reg sdo_neg_r;
+reg sck_en_neg_r;
+reg csn_neg_r;
+
+always @ (negedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		sdo_neg_r <= 1'b0;
+		csn_neg_r <= 1'b1;
+		sck_en_neg_r <= 1'b0;
+	end else begin
+		sdo_neg_r <= sdo;
+		csn_neg_r <= csn;
+		sck_en_neg_r <= sck_en;
+	end
+end
+
+wire padout_sck_n = sck_en_neg_r && clk;
+
+assign padout_sdo = padin_retime_mem_out ? sdo_pos_r : sdo_neg_r;
+assign padout_csn = padin_retime_mem_out ? csn_pos_r : csn_neg_r;
+// Literally a behavioural mux on a clock lmao
+assign padout_sck = padin_retime_mem_out ? padout_sck_p : padout_sck_n;
 
 // ----------------------------------------------------------------------------
 // Input paths
 
+// 4 options:
+// - 0: Nothing
+// - 1: Some delay buffers
+// - 2: An active-high latch after delay buffers
+// - 3: A negedge flop
+
+wire padin_sdi_delay;
 `ifdef WHISK_CELLS_SKY130
-
-// ASIC version
-
-// TODO find a suitable delay buffer cell for hold buffering, and decide how to
-// dimension it against i[7:0] skew
-
-// TODO find a suitable latch cell (possibly sky130_fd_sc_hd__dlxtp)
+wire [2:0] padin_sdi_delay_int;
+sky130_fd_sc_hd__dlymetal6s6s delbuf[3:0] (
+	.A    ({padin_sdi_delay_int, padin_sdi}),
+	.X    ({padin_sdi_delay, padin_sdi_delay_int}),
+	.VPWR (1'b1),
+	.VGND (1'b0)
+);
+`else
+assign padin_sdi_delay = padin_sdi;
+`endif
 
 wire padin_sdi_delay = padin_sdi;
 
@@ -1039,22 +1075,20 @@ always @ (*) begin
 	end
 end
 
-assign sdi = sdi_latch;
+reg sdi_negedge;
 
-`else
-
-// Dodgy sim-only version
-
-reg padin_sdi_reg;
 always @ (negedge clk) begin
-	padin_sdi_reg <= padin_sdi;
+	sdi_negedge <= padin_sdi;
 end
 
-// FIXME there is something I don't understand here with the CXXRTL delta cycles
-// assign sdi = padin_sdi_reg;
-assign sdi = padin_sdi;
+wire [3:0] sdi_retime_opt = {
+	sdi_negedge,
+	sdi_latch,
+	padin_sdi_delay,
+	padin_sdi
+};
 
-`endif
+assign sdi = sdi_retime_opt[padin_retime_mem_in];
 
 endmodule
 
@@ -1108,7 +1142,7 @@ assign padout_sdo = sdo_r;
 assign padout_latch_i = latch_i_r;
 assign padout_latch_o = latch_o_r;
 
-// TODO clock gating cell?
+// Again, no clock gating cell for TT2, but must revisit in future.
 assign padout_sck = sck_en_r && !clk;
 
 // ----------------------------------------------------------------------------
