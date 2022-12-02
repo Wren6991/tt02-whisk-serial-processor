@@ -1055,7 +1055,7 @@ assign padout_sck = padin_retime_mem_out ? padout_sck_p : padout_sck_n;
 wire padin_sdi_delay;
 `ifdef WHISK_CELLS_SKY130
 wire [2:0] padin_sdi_delay_int;
-sky130_fd_sc_hd__dlymetal6s6s delbuf[3:0] (
+sky130_fd_sc_hd__dlymetal6s6s_1 delbuf[3:0] (
 	.A    ({padin_sdi_delay_int, padin_sdi}),
 	.X    ({padin_sdi_delay, padin_sdi_delay_int}),
 	.VPWR (1'b1),
