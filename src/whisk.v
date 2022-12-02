@@ -553,9 +553,10 @@ wire bit_co = alu_result && (alu_ci || ~|bit_ctr);
 wire instr_op_ls_byte = !(instr_op_ls_sumr || instr_op_ls_suma);
 wire instr_op_ls_sbyte = instr_rt[2];
 
-wire [1:0] alu_load =
-	!(bit_ctr[3] && instr_op_ls_byte) ? {2{mem_sdi_prev}} :
-	instr_op_ls_sbyte                 ? {2{alu_ci}}       : {alu_ci, 1'b0};
+wire [1:0] alu_load = {
+	bit_ctr[3]                     ? alu_ci                      : mem_sdi_prev,
+	bit_ctr[3] && instr_op_ls_byte ? alu_ci && instr_op_ls_sbyte : mem_sdi_prev
+};
 
 wire alu_co;
 assign {alu_co, alu_result} =

@@ -102,7 +102,9 @@ Of the 16 major opcodes, 15 are currently allocated:
 
 > *No XOR. It's probably less common than clearing bits (ANDN), it can be synthesised with three instructions (ANDN, ANDN, OR) plus a register clobber. The use of XOR + imm to do NOT is performed better by ANDN with a zero register.*
 
-> *No multi-bit shift. Efficient multi-bit shifts require control of the shifting of the register file. Even if the register file shift direction is controllable, this would take 32 cycles: 16 to get shift amount to nearest multiple of 2 by dithering the left/right shift signal, then next 16 to shift by 1 by shifting through the ALU carry flop. Don't feel this is worth the control complexity, and we can save opcode space by putting the shifts on a minor opcode.*
+> *No multi-bit shift. Just doesn't fit well with the constantly-rotating register files without a lot of control complexity. Luckily on a 16-bit machine the most common address scale factor is 2.*
+
+> *SLL could be perfectly replaced by add to self (except for shifting from the program counter) but I kept the dedicated instruction because it makes the assembler simpler.*
 
 > *One of the 16 major opcodes is reserved for Tiny Tapeout 3, plus quite a few minor opcodes under Shift, In/out and byte load/store.*
 
@@ -147,9 +149,9 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 
 #### Flag Results of Instructions
 
-`Z` is always the NOR reduction of all bits of the result (or, for loads/stores, all bits of the data transferred to/from memory).
+`Z` is always the NOR reduction of all bits of the result. (Except for stores)
 
-`N` is always the MSB of the result (or, for loads/stores, the MSB of the data transferred to/from memory).
+`N` is always the MSB of the result (or, for loads/stores, the MSB of the data transferred to/from memory). (Except for stores)
 
 `C` differs with the instruction:
 
@@ -157,7 +159,8 @@ There is no branch instruction -- just do a conditional ADD on PC. Likewise ther
 * AND/ANDN/OR set `C` if and only if the result is all-ones
 * SLL/SRL/SRA set `C` to the bit shifted out of the register
 * Loads set `C` to bit 7 of the load data
-* Stores set `C` to an unknown value
+
+Stores set all flags to unknown values.
 
 > *I originally intended to make loads set `C` to bit 7 to speed up software emulation of sign-extending byte loads: lh rs, rt; or.cs rs, rs, #0xff00. When I added instructions for byte loads, this became unnecessary, but because I used the ALU carry flop to propagate the sign up from bit 7, it fell out naturally that all loads set `C` to 7.*
 
@@ -237,11 +240,9 @@ nop           -> add.pr zero, zero, zero // Doesn't write flags either
 Some dubious operations that nevertheless exist:
 
 ```
-vec label     -> lhib pc, pc, @label   // Vector through a function pointer stored at some label
-trace rs      -> shia pc, rs, #2       // Record program counter to buffer
-leap          -> sll pc, pc            // Jump to twice the current instruction address, plus 4
-ff8a          -> ld pc, pc, #-2        // Jump to address 0xff8a
-
+vec label       -> lh pc, pc, @label     // Vector through a function pointer stored at some label
+trace rs        -> shia pc, rs, #2       // Record program counter to buffer
+godo rd, label  -> shib rd, pc, @label   // Store instruction in rd to label, then jump to it
 ```
 
 ### Execution Timings
@@ -308,7 +309,17 @@ Alternatively I can look a bit closer at the sampling logic, and try to get the 
 
 # TODO
 
+## Pre-submission
+
 * Tests!
 * Check polarity and timing of shift register strobes
 * Fully understand timing of SPI input
 * Add timing mux options to SPI input if things are still not fully clear
+
+### Post-submission
+
+* Assembler macros
+* Add standard macros for things like `j` to the assembler
+* Local labels (like gcc `1f`/`1b` but optionally namespaced by macro)
+* Write a RISC-V emulator in asm
+

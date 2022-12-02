@@ -60,7 +60,6 @@ class WhiskCPU:
 			addr = addr_sum if (instr_opc & OP_MASK_LDST_AA) else operand_s
 			byte = not(instr_opc & (OP_MASK_LDST_AA | OP_MASK_LDST_AR))
 			sbyte = byte and (instr_rt == OPC2_LBS)
-			# Carry is the carry-out of the address addition, always
 			if instr_cond == 0: self.c = addr_sum != operand_s + operand_t
 			# Address writeback is visible to the store data, so do it first.
 			if instr_opc & OP_MASK_LDST_AR:
@@ -74,12 +73,15 @@ class WhiskCPU:
 					self.mem[(addr + 1) & self.REG_MASK] = (operand_d >> 8) & 0xff
 				if instr_cond == 0: self.z = operand_d == 0
 				if instr_cond == 0: self.n = (operand_d & 0x8000) != 0
+				# Undefined:
+				if instr_cond == 0: self.c = False
 			else:
 				writeback_data = self.mem[addr] | (self.mem[(addr + 1) & self.REG_MASK] << 8)
 				if byte:
 					writeback_data = writeback_data & 0xff
 				if sbyte:
 					writeback_data = (writeback_data - ((writeback_data & 0x80) << 1)) & self.REG_MASK
+				if instr_cond == 0: self.c = (writeback_data & 0x80) != 0
 		elif instr_opc == OPC_ADD:
 			writeback_data = (operand_s + operand_t) & self.REG_MASK
 			if instr_cond == 0: self.c = writeback_data != operand_s + operand_t

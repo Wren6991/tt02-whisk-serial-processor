@@ -21,3 +21,4 @@ test_data:
 .hword 0x5678
 .hword 0xabcd
 .hword 0xdef3
+.hword 0x0000
