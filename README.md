@@ -93,6 +93,7 @@ Of the 16 major opcodes, 15 are currently allocated:
 * 0x5: Shift (minor opcode in `rt`)
 	* 0x0: SRL `rd = rs >> 1`
 	* 0x1: SRA `rd = $signed(rs) >>> 1`
+	* 0x2: ROR `rd = (rs[0], rs[15:1]}`
 	* 0x4: SLL `rd = rs << 1`
 * 0x6: In/out (minor opcode in `rt`):
 	* 0x0: IN `rd = inport`
@@ -307,16 +308,7 @@ This is almost perfect, except the serial input is only valid for a single refre
 
 Alternatively I can look a bit closer at the sampling logic, and try to get the input sample to fall sufficiently far after the rising edge of SCK that the SDI input to my design is valid for two cycles, and I can just sample on the rising edge of `i[0]` like a normal person.
 
-# TODO
-
-## Pre-submission
-
-* Tests!
-* Check polarity and timing of shift register strobes
-* Fully understand timing of SPI input
-* Add timing mux options to SPI input if things are still not fully clear
-
-### Post-submission
+# TODO (Post-submission)
 
 * Assembler macros
 * Add standard macros for things like `j` to the assembler
