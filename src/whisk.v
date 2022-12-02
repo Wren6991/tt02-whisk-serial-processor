@@ -58,6 +58,7 @@ assign io_out[2] = io_mem_sdo;
 
 wire       io_retime_mem_out = io_in[4];
 wire [1:0] io_retime_mem_in  = io_in[6:5];
+wire       io_retime_ioport_out = io_in[7];
 
 // IO port (shift register interface)
 wire io_ioport_sdi = io_in[3];
@@ -66,6 +67,7 @@ wire io_ioport_sck;
 wire io_ioport_sdo;
 wire io_ioport_latch_i;
 wire io_ioport_latch_o;
+
 
 assign io_out[3] = io_ioport_sck;
 assign io_out[4] = io_ioport_sdo;
@@ -76,22 +78,23 @@ assign io_out[6] = io_ioport_latch_o;
 assign io_out[7] = 1'b0;
 
 whisk_top top_u (
-	.io_clk            (io_clk),
-	.io_rst_n          (io_rst_n),
+	.io_clk               (io_clk),
+	.io_rst_n             (io_rst_n),
 
-	.io_mem_sdi        (io_mem_sdi),
-	.io_mem_csn        (io_mem_csn),
-	.io_mem_sck        (io_mem_sck),
-	.io_mem_sdo        (io_mem_sdo),
+	.io_mem_sdi           (io_mem_sdi),
+	.io_mem_csn           (io_mem_csn),
+	.io_mem_sck           (io_mem_sck),
+	.io_mem_sdo           (io_mem_sdo),
 
-	.io_retime_mem_out (io_retime_mem_out),
-	.io_retime_mem_in  (io_retime_mem_in),
+	.io_retime_mem_out    (io_retime_mem_out),
+	.io_retime_mem_in     (io_retime_mem_in),
+	.io_retime_ioport_out (io_retime_mem_out),
 
-	.io_ioport_sdi     (io_ioport_sdi),
-	.io_ioport_sck     (io_ioport_sck),
-	.io_ioport_sdo     (io_ioport_sdo),
-	.io_ioport_latch_i (io_ioport_latch_i),
-	.io_ioport_latch_o (io_ioport_latch_o)
+	.io_ioport_sdi        (io_ioport_sdi),
+	.io_ioport_sck        (io_ioport_sck),
+	.io_ioport_sdo        (io_ioport_sdo),
+	.io_ioport_latch_i    (io_ioport_latch_i),
+	.io_ioport_latch_o    (io_ioport_latch_o)
 );
 
 endmodule
@@ -112,6 +115,7 @@ module whisk_top (
 
 	input  wire       io_retime_mem_out,
 	input  wire [1:0] io_retime_mem_in,
+	input  wire       io_retime_ioport_out,
 
 	input  wire       io_ioport_sdi,
 	output wire       io_ioport_sck,
@@ -190,20 +194,22 @@ whisk_spi_serdes mem_serdes_u (
 );
 
 whisk_ioport_serdes io_serdes_u (
-	.clk             (clk),
-	.rst_n           (rst_n),
+	.clk                     (clk),
+	.rst_n                   (rst_n),
 
-	.sdo             (ioport_sdo_next),
-	.sck_en          (ioport_sck_en_next),
-	.latch_i         (ioport_latch_i_next),
-	.latch_o         (ioport_latch_o_next),
-	.sdi             (ioport_sdi_prev),
+	.sdo                     (ioport_sdo_next),
+	.sck_en                  (ioport_sck_en_next),
+	.latch_i                 (ioport_latch_i_next),
+	.latch_o                 (ioport_latch_o_next),
+	.sdi                     (ioport_sdi_prev),
 
-	.padout_sdo      (io_ioport_sdo),
-	.padout_sck      (io_ioport_sck),
-	.padout_latch_i  (io_ioport_latch_i),
-	.padout_latch_o  (io_ioport_latch_o),
-	.padin_sdi       (io_ioport_sdi)
+	.padout_sdo              (io_ioport_sdo),
+	.padout_sck              (io_ioport_sck),
+	.padout_latch_i          (io_ioport_latch_i),
+	.padout_latch_o          (io_ioport_latch_o),
+	.padin_sdi               (io_ioport_sdi),
+
+	.padin_retime_ioport_out (io_retime_ioport_out)
 );
 
 endmodule
@@ -1117,37 +1123,62 @@ module whisk_ioport_serdes(
 	output wire padout_sck,
 	output wire padout_latch_i,
 	output wire padout_latch_o,
-	input  wire padin_sdi
+	input  wire padin_sdi,
+
+	input  wire padin_retime_ioport_out
 );
 
 // ----------------------------------------------------------------------------
 // Output paths
 
-reg sdo_r;
-reg sck_en_r;
-reg latch_i_r;
-reg latch_o_r;
+// Again, stupid cheesy half cycle retiming option that creates a half-cycle
+// path from the core
+
+reg sdo_pos;
+reg sck_en_pos;
+reg latch_i_pos;
+reg latch_o_pos;
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
-		sdo_r <= 1'b0;
-		sck_en_r <= 1'b0;
-		latch_i_r <= 1'b0;
-		latch_o_r <= 1'b0;
+		sdo_pos <= 1'b0;
+		sck_en_pos <= 1'b0;
+		latch_i_pos <= 1'b0;
+		latch_o_pos <= 1'b0;
 	end else begin
-		sdo_r <= sdo;
-		sck_en_r <= sck_en;
-		latch_i_r <= latch_i;
-		latch_o_r <= latch_o;
+		sdo_pos <= sdo;
+		sck_en_pos <= sck_en;
+		latch_i_pos <= latch_i;
+		latch_o_pos <= latch_o;
 	end
 end
 
-assign padout_sdo = sdo_r;
-assign padout_latch_i = latch_i_r;
-assign padout_latch_o = latch_o_r;
+reg sdo_neg;
+reg sck_en_neg;
+reg latch_i_neg;
+reg latch_o_neg;
 
-// Again, no clock gating cell for TT2, but must revisit in future.
-assign padout_sck = sck_en_r && !clk;
+always @ (negedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		sdo_neg <= 1'b0;
+		sck_en_neg <= 1'b0;
+		latch_i_neg <= 1'b0;
+		latch_o_neg <= 1'b0;
+	end else begin
+		sdo_neg <= sdo;
+		sck_en_neg <= sck_en;
+		latch_i_neg <= latch_i;
+		latch_o_neg <= latch_o;
+	end
+end
+
+assign padout_sdo     = padin_retime_ioport_out ? sdo_neg     : sdo_pos;
+assign padout_latch_i = padin_retime_ioport_out ? latch_i_neg : latch_i_pos;
+assign padout_latch_o = padin_retime_ioport_out ? latch_o_neg : latch_o_pos;
+
+// Again, no clock gating cell for TT2, but must revisit in future. Also
+// behavioural mux on clock lmao
+assign padout_sck = padin_retime_ioport_out ? (sck_en_neg && clk) : (sck_en_pos && !clk);
 
 // ----------------------------------------------------------------------------
 // Input paths
