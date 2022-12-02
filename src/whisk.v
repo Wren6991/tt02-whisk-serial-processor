@@ -558,7 +558,13 @@ wire [1:0] alu_shift_r = {
 };
 
 // Carry is an all-ones flag for bitwise ops
-wire bit_co = alu_result && (alu_ci || ~|bit_ctr);
+wire alu_bitop_no_c =
+	instr_op == OP_AND    ? alu_op_s &&  alu_op_t :
+	instr_op == OP_ANDN   ? alu_op_s && !alu_op_t : alu_op_s ||  alu_op_t;
+
+wire alu_bit_co = alu_bitop_no_c && (alu_ci || ~|bit_ctr);
+
+wire [1:0] alu_bitop = {alu_bit_co, alu_bitop_no_c};
 
 // Byte loads must be zero- or sign-extended. Use the carry to
 // propagate the sign.
@@ -572,16 +578,16 @@ wire [1:0] alu_load = {
 
 wire alu_co;
 assign {alu_co, alu_result} =
-	state == S_LS_DATA                   ? alu_load                        :
-	instr_op_ls                          ? alu_add                         :
-	instr_op == OP_ADD                   ? alu_add                         :
-	instr_op == OP_SUB                   ? alu_sub                         :
-	instr_op == OP_AND                   ? {bit_co, alu_op_s &&  alu_op_t} :
-	instr_op == OP_ANDN                  ? {bit_co, alu_op_s && !alu_op_t} :
-	instr_op == OP_OR                    ? {bit_co, alu_op_s ||  alu_op_t} :
-	instr_op == OP_SHIFT &&  instr_rt[2] ? alu_shift_l                     :
-	instr_op == OP_SHIFT && !instr_rt[2] ? alu_shift_r                     :
-	instr_op == OP_INOUT                 ? ioport_sdi_prev                 : alu_add;
+	state == S_LS_DATA                   ? alu_load         :
+	instr_op_ls                          ? alu_add          :
+	instr_op == OP_ADD                   ? alu_add          :
+	instr_op == OP_SUB                   ? alu_sub          :
+	instr_op == OP_AND                   ? alu_bitop        :
+	instr_op == OP_ANDN                  ? alu_bitop        :
+	instr_op == OP_OR                    ? alu_bitop        :
+	instr_op == OP_SHIFT &&  instr_rt[2] ? alu_shift_l      :
+	instr_op == OP_SHIFT && !instr_rt[2] ? alu_shift_r      :
+	instr_op == OP_INOUT                 ? ioport_sdi_prev  : alu_add;
 
 always @ (posedge clk) begin
 	alu_ci <= alu_co;
