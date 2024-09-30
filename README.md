@@ -9,6 +9,10 @@ Whisk is a 16-bit bit-serial processor, designed in a hurry for TinyTapeout 2.
 
 > Go to https://tinytapeout.com for instructions!
 
+## Blog Post
+
+This writeup was originally hosted on cohost, but since that site imploded, you can read it [here](cohost_blog_post.md).
+
 ## Goals
 
 * A processor that can run real programs, with a useful amount of memory
